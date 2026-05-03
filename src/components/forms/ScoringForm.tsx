@@ -11,10 +11,10 @@ const schema = z.object({
   game_clock_time: z.string().optional(),
   scoring_team: z.string().min(1, 'Required'),
   score_type: z.string().min(1, 'Required'),
+  pat_type: z.string().optional(), // only set if score_type is Touchdown or Defensive TD
   scoring_player_number: z.coerce.number().optional().nullable(),
   home_score_after: z.coerce.number().min(0),
   away_score_after: z.coerce.number().min(0),
-  drive_start_yard_line: z.coerce.number().optional().nullable(),
   notes: z.string().optional(),
 });
 
@@ -28,25 +28,29 @@ interface ScoringFormProps {
   awayScore: number;
   currentQuarter: number;
   currentClock: string;
-  onSave: (data: FormData & { game_id: string; wall_clock_time: string }) => Promise<void>;
+  onSave: (data: Omit<FormData, 'pat_type'> & { game_id: string; wall_clock_time: string; score_type: string }) => Promise<void>;
   onClose: () => void;
 }
 
-// ─── Score options with point values ─────────────────────────────────────────
-const SCORE_OPTIONS = [
-  // Individual plays
-  { value: 'Touchdown',         label: 'Touchdown',              points: 6,  group: 'individual' },
-  { value: 'PAT (kick)',        label: 'PAT – Kick (1 pt)',       points: 1,  group: 'individual' },
-  { value: 'PAT (2-pt)',        label: 'PAT – 2pt Conv.',         points: 2,  group: 'individual' },
-  { value: 'Field Goal',        label: 'Field Goal',              points: 3,  group: 'individual' },
-  { value: 'Safety',            label: 'Safety',                  points: 2,  group: 'individual' },
-  { value: 'Defensive TD',      label: 'Defensive TD',            points: 6,  group: 'individual' },
-  // Combined — records as single entry, auto-adds 7 or 8 pts
-  { value: 'TD + PAT (kick)',   label: 'TD + PAT Kick (7 pts)',   points: 7,  group: 'combined' },
-  { value: 'TD + PAT (2-pt)',   label: 'TD + 2pt Conv. (8 pts)',  points: 8,  group: 'combined' },
-  { value: 'Def TD + PAT (kick)', label: 'Def TD + PAT Kick (7 pts)', points: 7, group: 'combined' },
-  { value: 'Def TD + PAT (2-pt)', label: 'Def TD + 2pt (8 pts)', points: 8,  group: 'combined' },
-] as const;
+// Base points per score type (before PAT)
+const BASE_POINTS: Record<string, number> = {
+  'Touchdown':    6,
+  'Defensive TD': 6,
+  'Field Goal':   3,
+  'Safety':       2,
+  'PAT (kick)':   1,
+  'PAT (2-pt)':   2,
+};
+
+const PAT_POINTS: Record<string, number> = {
+  'PAT (kick)': 1,
+  'PAT (2-pt)': 2,
+};
+
+// Score types that get a PAT follow-up
+const TD_TYPES = ['Touchdown', 'Defensive TD'];
+
+const SCORE_TYPES = ['Touchdown', 'Defensive TD', 'Field Goal', 'Safety', 'PAT (kick)', 'PAT (2-pt)'];
 
 export function ScoringForm({
   gameId, homeName, awayName, homeScore, awayScore, currentQuarter, currentClock, onSave, onClose,
@@ -63,29 +67,36 @@ export function ScoringForm({
 
   const team = watch('scoring_team');
   const scoreType = watch('score_type');
+  const patType = watch('pat_type');
+  const isTD = TD_TYPES.includes(scoreType);
 
-  // Auto-calculate score when selection changes
-  const handleAutoScore = (newTeam?: string, newType?: string) => {
-    const t = newTeam ?? team;
-    const type = newType ?? scoreType;
-    const option = SCORE_OPTIONS.find(o => o.value === type);
-    if (!option || !t) return;
-    if (t === 'home') setValue('home_score_after', homeScore + option.points);
-    if (t === 'away') setValue('away_score_after', awayScore + option.points);
+  // Auto-calculate score
+  const calcScore = (t: string, type: string, pat?: string) => {
+    const base = BASE_POINTS[type] ?? 0;
+    const patPts = pat ? (PAT_POINTS[pat] ?? 0) : 0;
+    const total = base + patPts;
+    if (t === 'home') setValue('home_score_after', homeScore + total);
+    if (t === 'away') setValue('away_score_after', awayScore + total);
   };
 
   const onSubmit = async (data: FormData) => {
-    await onSave({ ...data, game_id: gameId, wall_clock_time: nowTimeString() });
+    // Build the final score_type label to store
+    let finalType = data.score_type;
+    if (isTD && data.pat_type) {
+      finalType = `${data.score_type} + ${data.pat_type}`;
+    } else if (isTD && !data.pat_type) {
+      finalType = `${data.score_type} (no PAT)`;
+    }
+    const { pat_type, ...rest } = data;
+    await onSave({ ...rest, score_type: finalType, game_id: gameId, wall_clock_time: nowTimeString() });
     onClose();
   };
-
-  const individual = SCORE_OPTIONS.filter(o => o.group === 'individual');
-  const combined   = SCORE_OPTIONS.filter(o => o.group === 'combined');
 
   return (
     <Modal title="🏆 Scoring Play" onClose={onClose} size="md">
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
 
+        {/* Quarter + Clock */}
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="label">Quarter</label>
@@ -103,13 +114,15 @@ export function ScoringForm({
         <div>
           <label className="label">Scoring Team</label>
           <div className="flex gap-2">
-            {[['home', homeName + ' (Home)'], ['away', awayName + ' (Away)']].map(([val, lbl]) => (
+            {[['home', homeName], ['away', awayName]].map(([val, lbl]) => (
               <label key={val}
-                className={`flex-1 text-center py-2 rounded-lg border cursor-pointer text-sm font-display tracking-wider transition-colors ${
-                  team === val ? 'bg-field-700 border-field-500 text-white' : 'border-[var(--color-border)] text-[var(--color-text-muted)]'
+                className={`flex-1 text-center py-2.5 rounded-lg border cursor-pointer text-sm font-display tracking-wider transition-colors ${
+                  team === val
+                    ? 'bg-field-700 border-field-500 text-white'
+                    : 'border-[var(--color-border)] text-[var(--color-text-muted)]'
                 }`}>
                 <input type="radio" {...register('scoring_team')} value={val} className="sr-only"
-                  onChange={() => handleAutoScore(val, scoreType)} />
+                  onChange={e => { setValue('scoring_team', e.target.value); calcScore(val, scoreType, patType); }} />
                 {lbl}
               </label>
             ))}
@@ -117,51 +130,66 @@ export function ScoringForm({
           {errors.scoring_team && <p className="text-red-400 text-xs mt-1">{errors.scoring_team.message}</p>}
         </div>
 
-        {/* ── Individual score types ── */}
+        {/* Score type */}
         <div>
           <label className="label">Score Type</label>
-          <div className="grid grid-cols-2 gap-1.5 mb-2">
-            {individual.map(opt => (
-              <label key={opt.value}
-                className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-sm transition-colors ${
-                  scoreType === opt.value
+          <div className="grid grid-cols-2 gap-1.5">
+            {SCORE_TYPES.map(type => (
+              <label key={type}
+                className={`flex items-center justify-between px-3 py-2.5 rounded-lg border cursor-pointer text-sm transition-colors ${
+                  scoreType === type
                     ? 'bg-field-800 border-field-500 text-field-300'
                     : 'border-[var(--color-border)] text-[var(--color-text-dim)]'
                 }`}>
-                <input type="radio" {...register('score_type')} value={opt.value} className="sr-only"
-                  onChange={() => handleAutoScore(team, opt.value)} />
-                {opt.label}
-                <span className="ml-auto text-xs font-mono text-[var(--color-text-dim)]">+{opt.points}</span>
-              </label>
-            ))}
-          </div>
-
-          {/* ── Combined TD + PAT options ── */}
-          <p className="text-xs text-[var(--color-text-dim)] uppercase tracking-wider mb-1.5">Combined (TD + PAT)</p>
-          <div className="grid grid-cols-1 gap-1.5">
-            {combined.map(opt => (
-              <label key={opt.value}
-                className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-sm transition-colors ${
-                  scoreType === opt.value
-                    ? 'bg-yellow-900 border-yellow-600 text-yellow-200'
-                    : 'border-[var(--color-border)] text-[var(--color-text-dim)]'
-                }`}>
-                <input type="radio" {...register('score_type')} value={opt.value} className="sr-only"
-                  onChange={() => handleAutoScore(team, opt.value)} />
-                {opt.label}
-                <span className="ml-auto text-xs font-mono text-[var(--color-text-dim)]">+{opt.points}</span>
+                <span className="flex items-center gap-2">
+                  <input type="radio" {...register('score_type')} value={type} className="sr-only"
+                    onChange={() => { setValue('score_type', type); setValue('pat_type', undefined); calcScore(team, type, undefined); }} />
+                  {type}
+                </span>
+                <span className="font-mono text-xs text-[var(--color-text-dim)]">+{BASE_POINTS[type] ?? 0}</span>
               </label>
             ))}
           </div>
           {errors.score_type && <p className="text-red-400 text-xs mt-1">{errors.score_type.message}</p>}
         </div>
 
+        {/* PAT follow-up — only shown after TD or Defensive TD */}
+        {isTD && (
+          <div className="border border-yellow-800 rounded-xl p-3 bg-yellow-950/30">
+            <label className="label text-yellow-400">PAT (optional)</label>
+            <p className="text-xs text-[var(--color-text-dim)] mb-2">Leave unselected if PAT was not attempted or failed</p>
+            <div className="flex gap-2">
+              {['PAT (kick)', 'PAT (2-pt)'].map(pat => (
+                <label key={pat}
+                  className={`flex-1 text-center py-2 rounded-lg border cursor-pointer text-sm transition-colors ${
+                    patType === pat
+                      ? 'bg-yellow-800 border-yellow-500 text-yellow-200'
+                      : 'border-[var(--color-border)] text-[var(--color-text-dim)]'
+                  }`}>
+                  <input type="radio" {...register('pat_type')} value={pat} className="sr-only"
+                    onChange={() => { setValue('pat_type', pat); calcScore(team, scoreType, pat); }} />
+                  {pat === 'PAT (kick)' ? 'Kick (+1)' : '2-pt Conv. (+2)'}
+                </label>
+              ))}
+              {/* Clear PAT selection */}
+              {patType && (
+                <button type="button"
+                  onClick={() => { setValue('pat_type', undefined); calcScore(team, scoreType, undefined); }}
+                  className="px-3 text-xs text-[var(--color-text-dim)] border border-[var(--color-border)] rounded-lg">
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Player # */}
         <div>
           <label className="label">Player # (opt)</label>
           <input {...register('scoring_player_number')} type="number" placeholder="##" className="input-field" />
         </div>
 
-        {/* Score after */}
+        {/* Score after — always editable */}
         <div>
           <label className="label">Score After This Play</label>
           <div className="grid grid-cols-2 gap-3">
