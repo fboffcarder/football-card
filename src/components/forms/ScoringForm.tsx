@@ -4,7 +4,6 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Modal } from '@/components/ui/Modal';
-import { SCORE_TYPES } from '@/types';
 import { nowTimeString } from '@/lib/utils';
 
 const schema = z.object({
@@ -33,15 +32,21 @@ interface ScoringFormProps {
   onClose: () => void;
 }
 
-// Points added per score type
-const SCORE_POINTS: Record<string, { home?: number; away?: number }> = {
-  'Touchdown': { home: 6, away: 6 },
-  'PAT (kick)': { home: 1, away: 1 },
-  'PAT (2-pt)': { home: 2, away: 2 },
-  'Field Goal': { home: 3, away: 3 },
-  'Safety': { home: 2, away: 2 },
-  'Defensive TD': { home: 6, away: 6 },
-};
+// ─── Score options with point values ─────────────────────────────────────────
+const SCORE_OPTIONS = [
+  // Individual plays
+  { value: 'Touchdown',         label: 'Touchdown',              points: 6,  group: 'individual' },
+  { value: 'PAT (kick)',        label: 'PAT – Kick (1 pt)',       points: 1,  group: 'individual' },
+  { value: 'PAT (2-pt)',        label: 'PAT – 2pt Conv.',         points: 2,  group: 'individual' },
+  { value: 'Field Goal',        label: 'Field Goal',              points: 3,  group: 'individual' },
+  { value: 'Safety',            label: 'Safety',                  points: 2,  group: 'individual' },
+  { value: 'Defensive TD',      label: 'Defensive TD',            points: 6,  group: 'individual' },
+  // Combined — records as single entry, auto-adds 7 or 8 pts
+  { value: 'TD + PAT (kick)',   label: 'TD + PAT Kick (7 pts)',   points: 7,  group: 'combined' },
+  { value: 'TD + PAT (2-pt)',   label: 'TD + 2pt Conv. (8 pts)',  points: 8,  group: 'combined' },
+  { value: 'Def TD + PAT (kick)', label: 'Def TD + PAT Kick (7 pts)', points: 7, group: 'combined' },
+  { value: 'Def TD + PAT (2-pt)', label: 'Def TD + 2pt (8 pts)', points: 8,  group: 'combined' },
+] as const;
 
 export function ScoringForm({
   gameId, homeName, awayName, homeScore, awayScore, currentQuarter, currentClock, onSave, onClose,
@@ -56,15 +61,17 @@ export function ScoringForm({
     },
   });
 
-  // Auto-update score when team + type changes
   const team = watch('scoring_team');
   const scoreType = watch('score_type');
 
-  const handleTeamOrTypeChange = () => {
-    const points = SCORE_POINTS[scoreType];
-    if (!points) return;
-    if (team === 'home') setValue('home_score_after', homeScore + (points.home ?? 0));
-    if (team === 'away') setValue('away_score_after', awayScore + (points.away ?? 0));
+  // Auto-calculate score when selection changes
+  const handleAutoScore = (newTeam?: string, newType?: string) => {
+    const t = newTeam ?? team;
+    const type = newType ?? scoreType;
+    const option = SCORE_OPTIONS.find(o => o.value === type);
+    if (!option || !t) return;
+    if (t === 'home') setValue('home_score_after', homeScore + option.points);
+    if (t === 'away') setValue('away_score_after', awayScore + option.points);
   };
 
   const onSubmit = async (data: FormData) => {
@@ -72,9 +79,13 @@ export function ScoringForm({
     onClose();
   };
 
+  const individual = SCORE_OPTIONS.filter(o => o.group === 'individual');
+  const combined   = SCORE_OPTIONS.filter(o => o.group === 'combined');
+
   return (
     <Modal title="🏆 Scoring Play" onClose={onClose} size="md">
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" onChange={handleTeamOrTypeChange}>
+      <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="label">Quarter</label>
@@ -88,23 +99,57 @@ export function ScoringForm({
           </div>
         </div>
 
+        {/* Scoring team */}
         <div>
           <label className="label">Scoring Team</label>
-          <select {...register('scoring_team')} className="input-field">
-            <option value="">Select…</option>
-            <option value="home">{homeName} (Home)</option>
-            <option value="away">{awayName} (Away)</option>
-          </select>
+          <div className="flex gap-2">
+            {[['home', homeName + ' (Home)'], ['away', awayName + ' (Away)']].map(([val, lbl]) => (
+              <label key={val}
+                className={`flex-1 text-center py-2 rounded-lg border cursor-pointer text-sm font-display tracking-wider transition-colors ${
+                  team === val ? 'bg-field-700 border-field-500 text-white' : 'border-[var(--color-border)] text-[var(--color-text-muted)]'
+                }`}>
+                <input type="radio" {...register('scoring_team')} value={val} className="sr-only"
+                  onChange={() => handleAutoScore(val, scoreType)} />
+                {lbl}
+              </label>
+            ))}
+          </div>
           {errors.scoring_team && <p className="text-red-400 text-xs mt-1">{errors.scoring_team.message}</p>}
         </div>
 
+        {/* ── Individual score types ── */}
         <div>
           <label className="label">Score Type</label>
-          <div className="grid grid-cols-3 gap-2">
-            {SCORE_TYPES.map(s => (
-              <label key={s} className="flex items-center gap-2 bg-[var(--color-surface-2)] rounded-lg px-3 py-2 cursor-pointer">
-                <input type="radio" {...register('score_type')} value={s} className="accent-field-500" />
-                <span className="text-sm text-[var(--color-text)]">{s}</span>
+          <div className="grid grid-cols-2 gap-1.5 mb-2">
+            {individual.map(opt => (
+              <label key={opt.value}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-sm transition-colors ${
+                  scoreType === opt.value
+                    ? 'bg-field-800 border-field-500 text-field-300'
+                    : 'border-[var(--color-border)] text-[var(--color-text-dim)]'
+                }`}>
+                <input type="radio" {...register('score_type')} value={opt.value} className="sr-only"
+                  onChange={() => handleAutoScore(team, opt.value)} />
+                {opt.label}
+                <span className="ml-auto text-xs font-mono text-[var(--color-text-dim)]">+{opt.points}</span>
+              </label>
+            ))}
+          </div>
+
+          {/* ── Combined TD + PAT options ── */}
+          <p className="text-xs text-[var(--color-text-dim)] uppercase tracking-wider mb-1.5">Combined (TD + PAT)</p>
+          <div className="grid grid-cols-1 gap-1.5">
+            {combined.map(opt => (
+              <label key={opt.value}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-sm transition-colors ${
+                  scoreType === opt.value
+                    ? 'bg-yellow-900 border-yellow-600 text-yellow-200'
+                    : 'border-[var(--color-border)] text-[var(--color-text-dim)]'
+                }`}>
+                <input type="radio" {...register('score_type')} value={opt.value} className="sr-only"
+                  onChange={() => handleAutoScore(team, opt.value)} />
+                {opt.label}
+                <span className="ml-auto text-xs font-mono text-[var(--color-text-dim)]">+{opt.points}</span>
               </label>
             ))}
           </div>

@@ -120,7 +120,9 @@ export default function NewGamePage() {
       // Navigate to in-game screen
       router.push(`/game/${gameId}/live`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save game');
+      console.error('FULL ERROR:', err);
+      const msg = err instanceof Error ? err.message : JSON.stringify(err);
+      setError('Error: ' + msg);
       setSaving(false);
     }
   };
