@@ -12,7 +12,7 @@ import { addToQueue } from '@/lib/offlineQueue';
 
 // ─── Form schema ──────────────────────────────────────────────────────────────
 const officialSchema = z.object({
-  name: z.string().min(1),
+  name: z.string().optional().default(''),
   position: z.string().min(1),
   experience_years: z.coerce.number().optional().nullable(),
   conference_affiliation: z.string().optional(),
@@ -30,9 +30,9 @@ const schema = z.object({
   field_surface: z.string().optional(),
   officials: z.array(officialSchema).optional(),
   // Coin toss
-  toss_winner_side: z.string().optional(), // 'home' or 'away'
-  toss_call: z.string().optional(),
-  toss_result: z.string().optional(),
+  toss_winner_side: z.string().nullable().optional(), // 'home' or 'away'
+  toss_call: z.string().nullable().optional(),
+  toss_result: z.string().nullable().optional(),
   winner_choice: z.string().optional(),
   loser_choice: z.string().optional(),
   captains_home: z.string().optional(),
@@ -62,8 +62,8 @@ export default function NewGamePage() {
   const tossCall = watch('toss_call');
   const tossResult = watch('toss_result');
 
-  const onSubmit = async (data: FormData) => {
-    setSaving(true);
+  console.log('FORM ERRORS:', JSON.stringify(errors)); const onSubmit = async (data: FormData) => {
+    console.log('SUBMIT FIRED', data); setSaving(true);
     setError('');
 
     try {
