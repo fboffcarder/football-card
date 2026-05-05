@@ -4,8 +4,8 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Modal } from '@/components/ui/Modal';
+import type { Timeout } from '@/types';
 
-// wall_clock_time removed — not in timeouts table schema
 const schema = z.object({
   team: z.string().min(1, 'Required'),
   quarter: z.coerce.number().min(1).max(10),
@@ -23,16 +23,24 @@ interface TimeoutFormProps {
   awayName: string;
   currentQuarter: number;
   currentClock: string;
+  initialData?: Partial<Timeout>;
   onSave: (data: FormData & { game_id: string }) => Promise<void>;
   onClose: () => void;
 }
 
 export function TimeoutForm({
-  gameId, homeName, awayName, currentQuarter, currentClock, onSave, onClose,
+  gameId, homeName, awayName, currentQuarter, currentClock, initialData, onSave, onClose,
 }: TimeoutFormProps) {
   const { register, handleSubmit, watch, formState: { errors, isSubmitting } } = useForm<FormData>({
     resolver: zodResolver(schema),
-    defaultValues: { quarter: currentQuarter, game_clock_time: currentClock },
+    defaultValues: {
+      quarter: initialData?.quarter ?? currentQuarter,
+      game_clock_time: initialData?.game_clock_time ?? currentClock,
+      team: initialData?.team ?? '',
+      timeout_number_for_team: initialData?.timeout_number_for_team ?? undefined,
+      reason: initialData?.reason ?? '',
+      player_number: initialData?.player_number ?? undefined,
+    },
   });
 
   const reason = watch('reason');
@@ -112,7 +120,7 @@ export function TimeoutForm({
         )}
 
         <button type="submit" disabled={isSubmitting} className="btn-primary w-full">
-          {isSubmitting ? 'Saving…' : 'Save Timeout'}
+          {isSubmitting ? 'Saving…' : initialData ? 'Update Timeout' : 'Save Timeout'}
         </button>
       </form>
     </Modal>
