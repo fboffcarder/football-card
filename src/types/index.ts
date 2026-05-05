@@ -19,6 +19,9 @@ export interface Game {
   overtime_periods: number;
   notes: string | null;
   created_at: string;
+  // ─── Added in migration 002 ───
+  finalized: boolean;
+  finalized_at: string | null;
 }
 
 export interface Official {
