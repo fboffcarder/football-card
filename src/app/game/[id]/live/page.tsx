@@ -439,10 +439,3 @@ function Empty({ label }: { label: string }) {
     </div>
   );
 }
-
-      )}
-
-      <OfflineBadge />
-    </div>
-  );
-}
