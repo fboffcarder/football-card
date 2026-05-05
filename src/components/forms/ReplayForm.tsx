@@ -4,6 +4,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Modal } from '@/components/ui/Modal';
+import type { InstantReplay } from '@/types';
 
 const schema = z.object({
   quarter: z.coerce.number().min(1),
@@ -25,16 +26,27 @@ interface ReplayFormProps {
   awayName: string;
   currentQuarter: number;
   currentClock: string;
+  initialData?: Partial<InstantReplay>;
   onSave: (data: FormData & { game_id: string }) => Promise<void>;
   onClose: () => void;
 }
 
 export function ReplayForm({
-  gameId, homeName, awayName, currentQuarter, currentClock, onSave, onClose,
+  gameId, homeName, awayName, currentQuarter, currentClock, initialData, onSave, onClose,
 }: ReplayFormProps) {
   const { register, handleSubmit, watch, formState: { errors, isSubmitting } } = useForm<FormData>({
     resolver: zodResolver(schema),
-    defaultValues: { quarter: currentQuarter, game_clock_time: currentClock, initiated_by: '' },
+    defaultValues: {
+      quarter:                 initialData?.quarter                 ?? currentQuarter,
+      game_clock_time:         initialData?.game_clock_time         ?? currentClock,
+      initiated_by:            initialData?.initiated_by            ?? '',
+      challenging_team:        initialData?.challenging_team        ?? '',
+      play_description:        initialData?.play_description        ?? '',
+      original_ruling:         initialData?.original_ruling         ?? '',
+      outcome:                 initialData?.outcome                 ?? '',
+      timeout_charged:         initialData?.timeout_charged         ?? false,
+      review_duration_minutes: initialData?.review_duration_minutes ?? undefined,
+    },
   });
 
   const initiatedBy = watch('initiated_by');
@@ -121,7 +133,7 @@ export function ReplayForm({
         </div>
 
         <button type="submit" disabled={isSubmitting} className="btn-primary w-full">
-          {isSubmitting ? 'Saving…' : 'Save Replay'}
+          {isSubmitting ? 'Saving…' : initialData ? 'Update Replay' : 'Save Replay'}
         </button>
       </form>
     </Modal>
