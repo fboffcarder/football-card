@@ -2,239 +2,192 @@
 
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { useForm, useFieldArray } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
-import { ArrowLeft, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Share2, FileDown, Play, Lock, Trash2, Pencil, PlayCircle } from 'lucide-react';
 import { createClient } from '@/lib/supabase';
-import { OFFICIAL_POSITIONS, GAME_LEVELS, CONFERENCES } from '@/types';
+import { formatGameDate, formatQuarter, formatScore } from '@/lib/utils';
+import type { Game, Official, CoinToss, Timeout, ScoringPlay, Penalty, InstantReplay, GameEvent } from '@/types';
 
-// ─── Form schema (mirrors new game page) ──────────────────────────────────────
-const officialSchema = z.object({
-  name: z.string().optional().default(''),
-  position: z.string().min(1),
-  experience_years: z.coerce.number().optional().nullable(),
-  conference_affiliation: z.string().optional(),
-});
+type Tab = 'overview' | 'officials' | 'cointoss' | 'scoring' | 'timeouts' | 'penalties' | 'replays' | 'timeline';
 
-const schema = z.object({
-  game_date: z.string().min(1, 'Date required'),
-  kickoff_time: z.string().optional(),
-  home_team: z.string().min(1, 'Home team is required'),
-  away_team: z.string().min(1, 'Away team is required'),
-  venue: z.string().optional(),
-  conference: z.string().optional(),
-  game_level: z.string().optional(),
-  weather_conditions: z.string().optional(),
-  field_surface: z.string().optional(),
-  officials: z.array(officialSchema).optional(),
-  toss_winner_side: z.string().optional(),
-  toss_call: z.string().optional(),
-  toss_result: z.string().optional(),
-  winner_choice: z.string().optional(),
-  loser_choice: z.string().optional(),
-  captains_home: z.string().optional(),
-  captains_away: z.string().optional(),
-});
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'officials', label: 'Crew' },
+  { id: 'cointoss', label: 'Toss' },
+  { id: 'scoring', label: 'Scoring' },
+  { id: 'timeouts', label: 'Timeouts' },
+  { id: 'penalties', label: 'Penalties' },
+  { id: 'replays', label: 'Replays' },
+  { id: 'timeline', label: 'Timeline' },
+];
 
-type FormData = z.infer<typeof schema>;
-
-export default function EditGamePage() {
+export default function GameDetailPage() {
   const params = useParams();
   const router = useRouter();
   const gameId = params.id as string;
   const supabase = createClient();
 
+  const [tab, setTab] = useState<Tab>('overview');
+  const [game, setGame] = useState<Game | null>(null);
+  const [officials, setOfficials] = useState<Official[]>([]);
+  const [coinToss, setCoinToss] = useState<CoinToss | null>(null);
+  const [timeouts, setTimeouts] = useState<Timeout[]>([]);
+  const [scores, setScores] = useState<ScoringPlay[]>([]);
+  const [penalties, setPenalties] = useState<Penalty[]>([]);
+  const [replays, setReplays] = useState<InstantReplay[]>([]);
+  const [events, setEvents] = useState<GameEvent[]>([]);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const [coinTossId, setCoinTossId] = useState<string | null>(null);
 
-  const {
-    register,
-    control,
-    handleSubmit,
-    watch,
-    reset,
-    formState: { errors },
-  } = useForm<FormData>({
-    resolver: zodResolver(schema),
-    defaultValues: {
-      game_date: new Date().toISOString().split('T')[0],
-      officials: [{ name: '', position: 'Referee' }],
-    },
-  });
+  // ─── Modal / action state ─────────────────────────────────────────────────
+  const [showFinalizeConfirm, setShowFinalizeConfirm] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [actionError, setActionError] = useState('');
 
-  const { fields: officialFields, append, remove } = useFieldArray({
-    control,
-    name: 'officials',
-  });
-
-  // ─── Load existing data and pre-fill form ────────────────────────────────
   useEffect(() => {
     const load = async () => {
-      const [gameRes, officialsRes, coinTossRes] = await Promise.all([
+      const [g, o, ct, t, s, p, r, e] = await Promise.all([
         supabase.from('games').select('*').eq('id', gameId).single(),
         supabase.from('officials').select('*').eq('game_id', gameId),
         supabase.from('coin_toss').select('*').eq('game_id', gameId).single(),
+        supabase.from('timeouts').select('*').eq('game_id', gameId).order('quarter').order('game_clock_time'),
+        supabase.from('scoring_plays').select('*').eq('game_id', gameId).order('quarter').order('game_clock_time'),
+        supabase.from('penalties').select('*').eq('game_id', gameId).order('quarter').order('game_clock_time'),
+        supabase.from('instant_replays').select('*').eq('game_id', gameId).order('quarter'),
+        supabase.from('game_events').select('*').eq('game_id', gameId).order('quarter').order('game_clock_time'),
       ]);
-
-      const g = gameRes.data;
-      const o = officialsRes.data ?? [];
-      const ct = coinTossRes.data;
-
-      if (!g) {
-        router.push('/');
-        return;
-      }
-
-      // Redirect if game is finalized — should not be edited
-      if (g.finalized) {
-        router.push(`/game/${gameId}`);
-        return;
-      }
-
-      if (ct?.id) setCoinTossId(ct.id);
-
-      // Convert toss_winner team name back to "home" or "away" for the radio
-      const tossWinnerSide =
-        ct?.toss_winner === g.home_team ? 'home' :
-        ct?.toss_winner === g.away_team ? 'away' :
-        '';
-
-      // Trim HH:MM:SS → HH:MM for the time input if needed
-      const kickoffTime = g.kickoff_time
-        ? g.kickoff_time.substring(0, 5)
-        : '';
-
-      reset({
-        game_date: g.game_date,
-        kickoff_time: kickoffTime,
-        home_team: g.home_team,
-        away_team: g.away_team,
-        venue: g.venue ?? '',
-        conference: g.conference ?? '',
-        game_level: g.game_level ?? '',
-        weather_conditions: g.weather_conditions ?? '',
-        field_surface: g.field_surface ?? '',
-        officials:
-          o.length > 0
-            ? o.map((off) => ({
-                name: off.name,
-                position: off.position,
-                experience_years: off.experience_years ?? undefined,
-                conference_affiliation: off.conference_affiliation ?? '',
-              }))
-            : [{ name: '', position: 'Referee' }],
-        toss_winner_side: tossWinnerSide,
-        toss_call: ct?.toss_call ?? '',
-        toss_result: ct?.toss_result ?? '',
-        winner_choice: ct?.winner_choice ?? '',
-        loser_choice: ct?.loser_choice ?? '',
-        captains_home: ct?.captains_home ?? '',
-        captains_away: ct?.captains_away ?? '',
-      });
-
+      setGame(g.data);
+      setOfficials(o.data ?? []);
+      setCoinToss(ct.data);
+      setTimeouts(t.data ?? []);
+      setScores(s.data ?? []);
+      setPenalties(p.data ?? []);
+      setReplays(r.data ?? []);
+      setEvents(e.data ?? []);
       setLoading(false);
     };
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gameId]);
+  }, [gameId, supabase]);
 
-  const homeName = watch('home_team') || 'Home';
-  const awayName = watch('away_team') || 'Away';
-  const tossCall = watch('toss_call');
-  const tossResult = watch('toss_result');
+  // ─── Finalize ─────────────────────────────────────────────────────────────
+  const handleFinalize = async () => {
+    setFinalizing(true);
+    setActionError('');
+    const now = new Date().toISOString();
+    const { error } = await supabase
+      .from('games')
+      .update({ finalized: true, finalized_at: now })
+      .eq('id', gameId);
+    if (error) {
+      setActionError('Could not finalize: ' + error.message);
+      setFinalizing(false);
+      return;
+    }
+    setGame((prev) => prev ? { ...prev, finalized: true, finalized_at: now } : null);
+    setShowFinalizeConfirm(false);
+    setFinalizing(false);
+  };
 
-  // ─── Save ────────────────────────────────────────────────────────────────
-  const onSubmit = async (data: FormData) => {
-    setSaving(true);
-    setError('');
+  // ─── Delete ───────────────────────────────────────────────────────────────
+  const handleDelete = async () => {
+    setDeleting(true);
+    setActionError('');
+    const { error } = await supabase
+      .from('games')
+      .delete()
+      .eq('id', gameId);
+    if (error) {
+      setActionError('Could not delete: ' + error.message);
+      setDeleting(false);
+      return;
+    }
+    router.push('/');
+  };
 
-    try {
-      // 1. Update game record
-      const { error: gameErr } = await supabase
-        .from('games')
-        .update({
-          game_date: data.game_date,
-          kickoff_time: data.kickoff_time || null,
-          home_team: data.home_team,
-          away_team: data.away_team,
-          venue: data.venue || null,
-          conference: data.conference || null,
-          game_level: data.game_level || null,
-          weather_conditions: data.weather_conditions || null,
-          field_surface: data.field_surface || null,
-        })
-        .eq('id', gameId);
+  // ─── Share as text ────────────────────────────────────────────────────────
+  const handleShare = () => {
+    if (!game) return;
+    const text = [
+      `GAME REPORT — ${formatGameDate(game.game_date)}`,
+      `${game.home_team} ${game.final_score_home ?? '?'} — ${game.final_score_away ?? '?'} ${game.away_team}`,
+      `Venue: ${game.venue ?? '—'} | ${game.conference ?? ''} ${game.game_level ?? ''}`,
+      '',
+      `Penalties: ${penalties.length} total`,
+      penalties.slice(0, 5).map(p => `  · ${p.foul_type} (${p.team_penalized === 'home' ? game.home_team : game.away_team}) — ${formatQuarter(p.quarter)} ${p.game_clock_time || ''}`).join('\n'),
+      '',
+      `Scoring Plays: ${scores.length}`,
+      scores.map(s => `  · ${s.score_type} — ${s.scoring_team === 'home' ? game.home_team : game.away_team} ${formatQuarter(s.quarter)} ${s.game_clock_time || ''} | ${s.home_score_after}–${s.away_score_after}`).join('\n'),
+      '',
+      `Replays: ${replays.length}`,
+      `Officials: ${officials.map(o => `${o.name} (${o.position})`).join(', ')}`,
+      '',
+      'Generated by Football Officiating App',
+    ].join('\n');
 
-      if (gameErr) throw gameErr;
-
-      // 2. Replace officials: delete all, then re-insert valid rows
-      await supabase.from('officials').delete().eq('game_id', gameId);
-      const validOfficials = (data.officials ?? []).filter(
-        (o) => o.name && o.name.trim().length > 0
-      );
-      if (validOfficials.length > 0) {
-        const { error: officialsErr } = await supabase.from('officials').insert(
-          validOfficials.map((o) => ({
-            name: o.name,
-            position: o.position,
-            experience_years: o.experience_years ?? null,
-            conference_affiliation: o.conference_affiliation || null,
-            game_id: gameId,
-          }))
-        );
-        if (officialsErr) throw officialsErr;
-      }
-
-      // 3. Save coin toss if any data was entered
-      if (data.toss_winner_side || data.toss_call) {
-        const tossWinner =
-          data.toss_winner_side === 'home'
-            ? data.home_team
-            : data.toss_winner_side === 'away'
-            ? data.away_team
-            : null;
-
-        const tossPayload = {
-          game_id: gameId,
-          toss_winner: tossWinner,
-          toss_call: data.toss_call || null,
-          toss_result: data.toss_result || null,
-          winner_choice: data.winner_choice || null,
-          loser_choice: data.loser_choice || null,
-          captains_home: data.captains_home || null,
-          captains_away: data.captains_away || null,
-        };
-
-        if (coinTossId) {
-          // Update existing coin toss record
-          const { error: tossErr } = await supabase
-            .from('coin_toss')
-            .update(tossPayload)
-            .eq('id', coinTossId);
-          if (tossErr) throw tossErr;
-        } else {
-          // Insert new coin toss record
-          const { error: tossErr } = await supabase
-            .from('coin_toss')
-            .insert(tossPayload);
-          if (tossErr) throw tossErr;
-        }
-      }
-
-      // Navigate back to post-game summary
-      router.push(`/game/${gameId}`);
-    } catch (err) {
-      console.error('Edit save error:', err);
-      const msg = err instanceof Error ? err.message : JSON.stringify(err);
-      setError('Error saving: ' + msg);
-      setSaving(false);
+    if (navigator.share) {
+      navigator.share({ title: 'Game Report', text });
+    } else {
+      navigator.clipboard.writeText(text);
+      alert('Game report copied to clipboard!');
     }
   };
 
-  // ─── Loading state ────────────────────────────────────────────────────────
+  // ─── PDF export ───────────────────────────────────────────────────────────
+  const handlePDF = async () => {
+    if (!game) return;
+    const jsPDF = (await import('jspdf')).default;
+    const autoTable = (await import('jspdf-autotable')).default;
+    const doc = new jsPDF();
+
+    doc.setFontSize(18);
+    doc.text('FOOTBALL OFFICIATING REPORT', 14, 18);
+    doc.setFontSize(11);
+    doc.text(`${game.home_team} vs ${game.away_team}`, 14, 28);
+    doc.text(`${formatGameDate(game.game_date)} — ${game.venue ?? ''}`, 14, 35);
+    doc.text(`Final: ${game.home_team} ${game.final_score_home ?? '?'} — ${game.final_score_away ?? '?'} ${game.away_team}`, 14, 42);
+
+    if (officials.length > 0) {
+      autoTable(doc, {
+        head: [['Official', 'Position']],
+        body: officials.map(o => [o.name, o.position]),
+        startY: 50,
+        headStyles: { fillColor: [21, 128, 61] },
+      });
+    }
+
+    if (penalties.length > 0) {
+      autoTable(doc, {
+        head: [['Qtr', 'Clock', 'Team', 'Foul', 'Yards', 'Status']],
+        body: penalties.map(p => [
+          formatQuarter(p.quarter), p.game_clock_time ?? '',
+          p.team_penalized === 'home' ? game.home_team : game.away_team,
+          p.foul_type, p.yardage ?? 'Spot', p.status,
+        ]),
+        startY: (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable?.finalY + 8 || 100,
+        headStyles: { fillColor: [220, 38, 38] },
+        didDrawPage: (data: unknown) => {
+          doc.setFontSize(9);
+          doc.text('PENALTIES', 14, (data as { settings: { startY: number } }).settings.startY - 3);
+        },
+      });
+    }
+
+    if (scores.length > 0) {
+      autoTable(doc, {
+        head: [['Qtr', 'Clock', 'Team', 'Type', 'Score']],
+        body: scores.map(s => [
+          formatQuarter(s.quarter), s.game_clock_time ?? '',
+          s.scoring_team === 'home' ? game.home_team : game.away_team,
+          s.score_type, `${s.home_score_after}–${s.away_score_after}`,
+        ]),
+        startY: (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable?.finalY + 8 || 150,
+        headStyles: { fillColor: [21, 128, 61] },
+      });
+    }
+
+    doc.save(`game-report-${game.game_date}-${game.home_team}-vs-${game.away_team}.pdf`);
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: 'var(--color-bg)' }}>
@@ -243,317 +196,492 @@ export default function EditGamePage() {
     );
   }
 
+  if (!game) return null;
+
+  const isLive = game.final_score_home === null;
+  const isFinalized = game.finalized === true;
+
   return (
     <div className="min-h-screen" style={{ backgroundColor: 'var(--color-bg)' }}>
-      {/* Header */}
+
+      {/* ── Finalize Confirmation Modal ── */}
+      {showFinalizeConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75">
+          <div className="card max-w-sm w-full space-y-5">
+            <div className="flex items-center gap-3">
+              <Lock size={22} className="text-field-400 shrink-0" />
+              <h3 className="font-display text-xl uppercase tracking-wider text-field-400">
+                Finalize Game?
+              </h3>
+            </div>
+            <p className="text-sm text-[var(--color-text-muted)] leading-relaxed">
+              This will permanently lock the game record. No further edits will be possible.
+              Make sure all data has been proofread before confirming.
+            </p>
+            {actionError && (
+              <p className="text-xs text-red-400 bg-red-900/30 rounded-lg px-3 py-2">{actionError}</p>
+            )}
+            <div className="flex gap-3">
+              <button
+                onClick={() => { setShowFinalizeConfirm(false); setActionError(''); }}
+                className="btn-secondary flex-1"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleFinalize}
+                disabled={finalizing}
+                className="btn-primary flex-1"
+              >
+                {finalizing ? 'Finalizing…' : 'YES, FINALIZE'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Delete Confirmation Modal ── */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75">
+          <div className="card max-w-sm w-full space-y-5">
+            <div className="flex items-center gap-3">
+              <Trash2 size={22} className="text-red-400 shrink-0" />
+              <h3 className="font-display text-xl uppercase tracking-wider text-red-400">
+                Delete Game?
+              </h3>
+            </div>
+            <p className="text-sm text-[var(--color-text-muted)] leading-relaxed">
+              This will <strong className="text-[var(--color-text)]">permanently delete</strong> this
+              game and all associated data — scores, penalties, timeouts, officials, and more.
+              This cannot be undone.
+            </p>
+            {actionError && (
+              <p className="text-xs text-red-400 bg-red-900/30 rounded-lg px-3 py-2">{actionError}</p>
+            )}
+            <div className="flex gap-3">
+              <button
+                onClick={() => { setShowDeleteConfirm(false); setActionError(''); }}
+                className="btn-secondary flex-1"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="flex-1 rounded-xl px-4 py-2.5 font-display uppercase tracking-wider text-sm
+                           bg-red-700 hover:bg-red-600 text-white disabled:opacity-50 transition-colors"
+              >
+                {deleting ? 'Deleting…' : 'YES, DELETE'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Header ── */}
       <header
-        className="sticky top-0 z-30 px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-3"
+        className="sticky top-0 z-30 px-4 py-3 border-b border-[var(--color-border)]"
         style={{ backgroundColor: 'var(--color-surface)' }}
       >
-        <button
-          onClick={() => router.back()}
-          className="p-2 rounded-full hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"
-        >
-          <ArrowLeft size={20} />
-        </button>
-        <div>
-          <h1 className="font-display text-xl tracking-wider uppercase text-[var(--color-text)]">
-            Edit Setup
-          </h1>
-          <p className="text-xs text-[var(--color-text-dim)]">Pre-game information</p>
+        <div className="max-w-2xl mx-auto">
+          <div className="flex items-center gap-3 mb-2">
+            <button onClick={() => router.push('/')} className="p-1.5 text-[var(--color-text-muted)]">
+              <ArrowLeft size={20} />
+            </button>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="font-display text-lg text-[var(--color-text)] truncate tracking-wide">
+                  {game.home_team} <span className="text-[var(--color-text-dim)]">vs</span> {game.away_team}
+                </h1>
+                {isFinalized && (
+                  <span className="inline-flex items-center gap-1 text-xs font-display uppercase tracking-wider
+                                   text-field-400 border border-field-700 bg-field-900/30 px-2 py-0.5 rounded-full">
+                    <Lock size={10} /> Finalized
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-[var(--color-text-dim)]">{formatGameDate(game.game_date)}</p>
+            </div>
+            {/* Action buttons */}
+            <div className="flex gap-2">
+              {isLive && !isFinalized && (
+                <button
+                  onClick={() => router.push(`/game/${gameId}/live`)}
+                  className="flex items-center gap-1 text-xs font-display uppercase tracking-wider
+                             text-field-400 border border-field-700 px-2 py-1 rounded-lg"
+                >
+                  <Play size={12} /> Live
+                </button>
+              )}
+              <button
+                onClick={handleShare}
+                className="p-2 text-[var(--color-text-muted)] hover:text-[var(--color-text)] rounded-lg hover:bg-[var(--color-surface-2)]"
+              >
+                <Share2 size={16} />
+              </button>
+              <button
+                onClick={handlePDF}
+                className="p-2 text-[var(--color-text-muted)] hover:text-[var(--color-text)] rounded-lg hover:bg-[var(--color-surface-2)]"
+              >
+                <FileDown size={16} />
+              </button>
+            </div>
+          </div>
+
+          {/* Final score banner */}
+          {!isLive && (
+            <div className="flex items-center justify-center gap-6 py-2 bg-[var(--color-surface-2)] rounded-xl mb-2">
+              <span className="font-display text-sm text-[var(--color-text-muted)] truncate max-w-[80px]">
+                {game.home_team}
+              </span>
+              <span className="font-display text-3xl text-[var(--color-text)]">
+                {game.final_score_home} — {game.final_score_away}
+              </span>
+              <span className="font-display text-sm text-[var(--color-text-muted)] truncate max-w-[80px]">
+                {game.away_team}
+              </span>
+            </div>
+          )}
+
+          {/* Tabs */}
+          <div className="flex gap-1 overflow-x-auto no-scrollbar">
+            {TABS.map(t => (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                className={`tab whitespace-nowrap ${tab === t.id ? 'tab-active' : 'tab-inactive'}`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
         </div>
       </header>
 
-      <form
-        onSubmit={handleSubmit(onSubmit)}
-        className="max-w-xl mx-auto px-4 py-5 space-y-6 pb-24"
-      >
-        {/* ── Game Info ── */}
-        <section className="card space-y-4">
-          <h2 className="font-display text-lg uppercase tracking-wider text-field-400">
-            Game Info
-          </h2>
+      <main className="max-w-2xl mx-auto px-4 py-5 space-y-4">
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="label">Date</label>
-              <input {...register('game_date')} type="date" className="input-field" />
-              {errors.game_date && (
-                <p className="text-red-400 text-xs mt-1">{errors.game_date.message}</p>
-              )}
-            </div>
-            <div>
-              <label className="label">Kickoff</label>
-              <input {...register('kickoff_time')} type="time" className="input-field" />
-            </div>
-          </div>
-
-          <div>
-            <label className="label">Home Team</label>
-            <input
-              {...register('home_team')}
-              placeholder="e.g. Ohio State"
-              className="input-field"
-            />
-            {errors.home_team && (
-              <p className="text-red-400 text-xs mt-1">{errors.home_team.message}</p>
-            )}
-          </div>
-
-          <div>
-            <label className="label">Away Team</label>
-            <input
-              {...register('away_team')}
-              placeholder="e.g. Michigan"
-              className="input-field"
-            />
-            {errors.away_team && (
-              <p className="text-red-400 text-xs mt-1">{errors.away_team.message}</p>
-            )}
-          </div>
-
-          <div>
-            <label className="label">Venue / Stadium</label>
-            <input
-              {...register('venue')}
-              placeholder="e.g. Ohio Stadium"
-              className="input-field"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="label">Conference</label>
-              <select {...register('conference')} className="input-field">
-                <option value="">Select…</option>
-                {CONFERENCES.map((c) => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="label">Level</label>
-              <select {...register('game_level')} className="input-field">
-                <option value="">Select…</option>
-                {GAME_LEVELS.map((l) => (
-                  <option key={l} value={l}>{l}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="label">Surface</label>
-              <select {...register('field_surface')} className="input-field">
-                <option value="">—</option>
-                <option value="grass">Grass</option>
-                <option value="turf">Turf</option>
-              </select>
-            </div>
-            <div>
-              <label className="label">Weather</label>
-              <input
-                {...register('weather_conditions')}
-                placeholder="Sunny, 72°"
-                className="input-field"
-              />
-            </div>
-          </div>
-        </section>
-
-        {/* ── Crew ── */}
-        <section className="card space-y-4">
-          <h2 className="font-display text-lg uppercase tracking-wider text-field-400">
-            Officials Crew
-          </h2>
-          <p className="text-xs text-[var(--color-text-dim)]">
-            Leave name blank to skip an official slot.
-          </p>
-
-          {officialFields.map((field, idx) => (
-            <div key={field.id} className="flex gap-2 items-start">
-              <div className="flex-1 space-y-2">
-                <input
-                  {...register(`officials.${idx}.name`)}
-                  placeholder="Official name (optional)"
-                  className="input-field"
-                />
-                <select {...register(`officials.${idx}.position`)} className="input-field">
-                  {OFFICIAL_POSITIONS.map((p) => (
-                    <option key={p} value={p}>{p}</option>
-                  ))}
-                </select>
-              </div>
-              {idx > 0 && (
-                <button
-                  type="button"
-                  onClick={() => remove(idx)}
-                  className="mt-1 p-2 text-red-400 hover:bg-red-900/30 rounded-lg"
-                >
-                  <Trash2 size={16} />
-                </button>
-              )}
-            </div>
-          ))}
-
-          {officialFields.length < 8 && (
-            <button
-              type="button"
-              onClick={() => append({ name: '', position: 'Umpire' })}
-              className="btn-secondary flex items-center gap-2 text-sm w-full justify-center"
-            >
-              <Plus size={14} /> Add Official
-            </button>
-          )}
-        </section>
-
-        {/* ── Coin Toss ── */}
-        <section className="card space-y-4">
-          <h2 className="font-display text-lg uppercase tracking-wider text-field-400">
-            Coin Toss
-          </h2>
-
-          <div>
-            <label className="label">Toss Winner</label>
-            <div className="flex gap-3">
+        {/* ── OVERVIEW ── */}
+        {tab === 'overview' && (
+          <div className="space-y-4">
+            <div className="card space-y-3">
+              <h2 className="font-display text-lg uppercase tracking-wider text-field-400">Game Info</h2>
               {[
-                ['home', homeName + ' (Home)'],
-                ['away', awayName + ' (Away)'],
-              ].map(([val, lbl]) => (
-                <label
-                  key={val}
-                  className="flex items-center gap-2 cursor-pointer flex-1 bg-[var(--color-surface-2)] rounded-lg px-3 py-2"
-                >
-                  <input
-                    type="radio"
-                    {...register('toss_winner_side')}
-                    value={val}
-                    className="accent-field-500"
-                  />
-                  <span className="text-sm text-[var(--color-text)]">{lbl}</span>
-                </label>
+                ['Date', formatGameDate(game.game_date)],
+                ['Venue', game.venue],
+                ['Conference', game.conference],
+                ['Level', game.game_level],
+                ['Surface', game.field_surface],
+                ['Weather', game.weather_conditions],
+                ['Kickoff', game.kickoff_time],
+                ['Actual Start', game.actual_start_time],
+                ['Halftime', game.halftime_duration_minutes ? `${game.halftime_duration_minutes} min` : null],
+                ['Overtime', game.overtime_periods > 0 ? `${game.overtime_periods} period(s)` : null],
+              ].filter(([_, v]) => v).map(([label, value]) => (
+                <div key={label as string} className="flex justify-between">
+                  <span className="text-sm text-[var(--color-text-muted)]">{label}</span>
+                  <span className="text-sm text-[var(--color-text)]">{value}</span>
+                </div>
               ))}
             </div>
-          </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="label">Called</label>
-              <div className="flex gap-2">
-                {['Heads', 'Tails'].map((v) => (
-                  <label key={v} className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      {...register('toss_call')}
-                      value={v}
-                      className="accent-field-500"
-                    />
-                    <span className="text-sm text-[var(--color-text)]">{v}</span>
-                  </label>
-                ))}
+            <div className="card">
+              <div className="grid grid-cols-3 gap-4 text-center">
+                <div>
+                  <div className="font-display text-3xl text-[var(--color-text)]">{penalties.length}</div>
+                  <div className="text-xs text-[var(--color-text-dim)] uppercase tracking-wider">Penalties</div>
+                </div>
+                <div>
+                  <div className="font-display text-3xl text-[var(--color-text)]">{timeouts.length}</div>
+                  <div className="text-xs text-[var(--color-text-dim)] uppercase tracking-wider">Timeouts</div>
+                </div>
+                <div>
+                  <div className="font-display text-3xl text-[var(--color-text)]">{replays.length}</div>
+                  <div className="text-xs text-[var(--color-text-dim)] uppercase tracking-wider">Replays</div>
+                </div>
               </div>
             </div>
-            <div>
-              <label className="label">Result</label>
-              <div className="flex gap-2">
-                {['Heads', 'Tails'].map((v) => (
-                  <label key={v} className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      {...register('toss_result')}
-                      value={v}
-                      className="accent-field-500"
-                    />
-                    <span
-                      className={`text-sm ${
-                        tossCall && tossResult && tossCall === v
-                          ? 'text-field-400'
-                          : 'text-[var(--color-text)]'
-                      }`}
+
+            {game.notes && (
+              <div className="card">
+                <h3 className="font-display text-sm uppercase tracking-wider text-field-400 mb-2">Notes</h3>
+                <p className="text-sm text-[var(--color-text)]">{game.notes}</p>
+              </div>
+            )}
+
+            {/* ── Manage Game ── */}
+            <div className="card space-y-3">
+              <h2 className="font-display text-lg uppercase tracking-wider text-field-400">Manage Game</h2>
+
+              {isFinalized ? (
+                <div className="flex items-center gap-3 bg-field-900/30 border border-field-700 rounded-xl px-4 py-3">
+                  <Lock size={18} className="text-field-400 shrink-0" />
+                  <div>
+                    <p className="text-sm font-display text-field-400 uppercase tracking-wider">Game Finalized</p>
+                    {game.finalized_at && (
+                      <p className="text-xs text-[var(--color-text-dim)] mt-0.5">
+                        {new Date(game.finalized_at).toLocaleDateString('en-US', {
+                          month: 'short', day: 'numeric', year: 'numeric',
+                          hour: 'numeric', minute: '2-digit',
+                        })}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* Edit buttons */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      onClick={() => router.push(`/game/${gameId}/edit`)}
+                      className="btn-secondary flex items-center justify-center gap-2 text-sm py-3"
                     >
-                      {v}
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          </div>
+                      <Pencil size={14} />
+                      Edit Setup
+                    </button>
+                    <button
+                      onClick={() => router.push(`/game/${gameId}/live`)}
+                      className="btn-secondary flex items-center justify-center gap-2 text-sm py-3"
+                    >
+                      <PlayCircle size={14} />
+                      Edit Events
+                    </button>
+                  </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="label">Winner&apos;s Choice</label>
-              <select {...register('winner_choice')} className="input-field">
-                <option value="">—</option>
-                <option value="Receive">Receive</option>
-                <option value="Kick">Kick</option>
-                <option value="Defer">Defer</option>
-                <option value="Choose End">Choose End</option>
-              </select>
-            </div>
-            <div>
-              <label className="label">Loser Gets</label>
-              <select {...register('loser_choice')} className="input-field">
-                <option value="">—</option>
-                <option value="Receive">Receive</option>
-                <option value="Kick">Kick</option>
-                <option value="Choose End">Choose End</option>
-              </select>
-            </div>
-          </div>
+                  {/* Finalize */}
+                  <button
+                    onClick={() => setShowFinalizeConfirm(true)}
+                    className="w-full flex items-center justify-center gap-2 rounded-xl px-4 py-3
+                               font-display uppercase tracking-wider text-sm
+                               bg-field-800 hover:bg-field-700 text-field-300 border border-field-600
+                               transition-colors"
+                  >
+                    <Lock size={14} />
+                    Finalize Game
+                  </button>
+                </>
+              )}
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="label">{homeName} Captains (#)</label>
-              <input
-                {...register('captains_home')}
-                placeholder="e.g. 12, 55, 7, 99"
-                className="input-field"
-              />
-              <p className="text-xs text-[var(--color-text-dim)] mt-1">
-                Comma-separated, up to 4
-              </p>
+              {/* Delete — always visible */}
+              <button
+                onClick={() => setShowDeleteConfirm(true)}
+                className="w-full flex items-center justify-center gap-2 rounded-xl px-4 py-3
+                           font-display uppercase tracking-wider text-sm
+                           bg-red-950/50 hover:bg-red-900/60 text-red-400 border border-red-900
+                           transition-colors"
+              >
+                <Trash2 size={14} />
+                Delete Game
+              </button>
             </div>
-            <div>
-              <label className="label">{awayName} Captains (#)</label>
-              <input
-                {...register('captains_away')}
-                placeholder="e.g. 18, 33, 44, 2"
-                className="input-field"
-              />
-            </div>
-          </div>
-        </section>
-
-        {error && (
-          <div className="bg-red-900/30 border border-red-700 text-red-300 rounded-lg px-4 py-3 text-sm">
-            {error}
           </div>
         )}
 
-        {/* Submit */}
-        <div
-          className="fixed bottom-0 left-0 right-0 p-4 border-t border-[var(--color-border)]"
-          style={{ backgroundColor: 'var(--color-surface)' }}
-        >
-          <div className="max-w-xl mx-auto flex gap-3">
-            <button
-              type="button"
-              onClick={() => router.back()}
-              className="btn-secondary flex-1 py-4"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="btn-primary flex-[2] text-xl py-4"
-            >
-              {saving ? 'Saving…' : '✓ Save Changes'}
-            </button>
+        {/* ── OFFICIALS ── */}
+        {tab === 'officials' && (
+          <div className="space-y-2">
+            {officials.length === 0 ? <Empty label="No officials recorded" /> : officials.map(o => (
+              <div key={o.id} className="card flex items-center justify-between">
+                <div>
+                  <div className="font-display text-base text-[var(--color-text)]">{o.name}</div>
+                  {o.conference_affiliation && (
+                    <div className="text-xs text-[var(--color-text-dim)]">{o.conference_affiliation}</div>
+                  )}
+                </div>
+                <div className="text-right">
+                  <div className="text-sm text-field-400 font-display">{o.position}</div>
+                  {o.experience_years && (
+                    <div className="text-xs text-[var(--color-text-dim)]">{o.experience_years} yrs</div>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
-        </div>
-      </form>
+        )}
+
+        {/* ── COIN TOSS ── */}
+        {tab === 'cointoss' && (
+          <div className="card space-y-3">
+            {!coinToss ? <Empty label="No coin toss recorded" /> : (
+              <>
+                {[
+                  ['Winner', coinToss.toss_winner],
+                  ['Called', coinToss.toss_call],
+                  ['Result', coinToss.toss_result],
+                  ['Winner Choice', coinToss.winner_choice],
+                  ['Loser Gets', coinToss.loser_choice],
+                  ['2nd Half', coinToss.second_half_choice],
+                  ['Home Captains', coinToss.captains_home],
+                  ['Away Captains', coinToss.captains_away],
+                ].filter(([_, v]) => v).map(([label, value]) => (
+                  <div key={label as string} className="flex justify-between">
+                    <span className="text-sm text-[var(--color-text-muted)]">{label}</span>
+                    <span className="text-sm text-[var(--color-text)]">{value}</span>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ── SCORING ── */}
+        {tab === 'scoring' && (
+          <div className="space-y-2">
+            {scores.length === 0 ? <Empty label="No scoring plays recorded" /> : scores.map(s => (
+              <div key={s.id} className="card flex items-center gap-3">
+                <div className="text-center min-w-[44px]">
+                  <div className="font-display text-base text-field-400">{formatQuarter(s.quarter)}</div>
+                  <div className="font-mono text-xs text-[var(--color-text-dim)]">{s.game_clock_time || '—'}</div>
+                </div>
+                <div className="flex-1">
+                  <div className="font-display text-base text-[var(--color-text)]">{s.score_type}</div>
+                  <div className="text-xs text-[var(--color-text-muted)]">
+                    {s.scoring_team === 'home' ? game.home_team : game.away_team}
+                    {s.scoring_player_number ? ` · #${s.scoring_player_number}` : ''}
+                  </div>
+                </div>
+                <div className="font-display text-xl text-[var(--color-text)]">
+                  {s.home_score_after}–{s.away_score_after}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ── TIMEOUTS ── */}
+        {tab === 'timeouts' && (
+          <div className="space-y-2">
+            {timeouts.length === 0 ? <Empty label="No timeouts recorded" /> : timeouts.map(t => (
+              <div key={t.id} className="card flex items-center gap-3">
+                <div className="text-center min-w-[44px]">
+                  <div className="font-display text-base text-yellow-400">{formatQuarter(t.quarter)}</div>
+                  <div className="font-mono text-xs text-[var(--color-text-dim)]">{t.game_clock_time || '—'}</div>
+                </div>
+                <div className="flex-1">
+                  <div className="font-display text-base text-[var(--color-text)]">
+                    {t.team === 'home' ? game.home_team : game.away_team}
+                  </div>
+                  {t.reason && <div className="text-xs text-[var(--color-text-muted)]">{t.reason}</div>}
+                </div>
+                {t.timeout_number_for_team && (
+                  <div className="text-xs text-[var(--color-text-dim)]">#{t.timeout_number_for_team}</div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ── PENALTIES ── */}
+        {tab === 'penalties' && (
+          <div className="space-y-2">
+            {penalties.length === 0 ? <Empty label="No penalties recorded" /> : penalties.map(p => (
+              <div key={p.id} className="card border-l-4 border-l-red-600">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1">
+                    <div className="font-display text-base text-[var(--color-text)]">{p.foul_type}</div>
+                    <div className="text-xs text-[var(--color-text-muted)] mt-0.5">
+                      {p.team_penalized === 'home'
+                        ? game.home_team
+                        : p.team_penalized === 'away'
+                        ? game.away_team
+                        : 'Offsetting'}
+                      {p.player_number ? ` · #${p.player_number}` : ''}
+                      {p.down_and_distance_before ? ` · ${p.down_and_distance_before}` : ''}
+                    </div>
+                    {p.calling_official_position && (
+                      <div className="text-xs text-[var(--color-text-dim)]">
+                        Called by: {p.calling_official_position}
+                      </div>
+                    )}
+                    {p.notes && (
+                      <div className="text-xs text-[var(--color-text-dim)] mt-1 italic">{p.notes}</div>
+                    )}
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className="font-display text-sm text-field-400">{formatQuarter(p.quarter)}</div>
+                    <div className="font-mono text-xs text-[var(--color-text-dim)]">{p.game_clock_time || '—'}</div>
+                    <div className={`text-xs font-display mt-1 ${
+                      p.status === 'Accepted'
+                        ? 'text-red-400'
+                        : p.status === 'Declined'
+                        ? 'text-[var(--color-text-dim)]'
+                        : 'text-yellow-400'
+                    }`}>
+                      {p.status}
+                    </div>
+                    <div className="text-xs text-[var(--color-text-dim)]">
+                      {p.spot_enforcement ? 'Spot' : p.yardage ? `${p.yardage} yds` : '—'}
+                      {p.automatic_first_down ? ' · Auto 1st' : ''}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ── REPLAYS ── */}
+        {tab === 'replays' && (
+          <div className="space-y-2">
+            {replays.length === 0 ? <Empty label="No instant replays recorded" /> : replays.map(r => (
+              <div key={r.id} className="card">
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <div className="font-display text-base text-[var(--color-text)]">{r.initiated_by}</div>
+                  <div className={`text-xs font-display px-2 py-0.5 rounded-full ${
+                    r.outcome === 'Reversed'
+                      ? 'bg-red-900/40 text-red-300'
+                      : r.outcome === 'Confirmed'
+                      ? 'bg-field-900/40 text-field-400'
+                      : 'bg-yellow-900/40 text-yellow-300'
+                  }`}>
+                    {r.outcome}
+                  </div>
+                </div>
+                {r.play_description && (
+                  <p className="text-sm text-[var(--color-text-muted)]">{r.play_description}</p>
+                )}
+                <div className="flex gap-4 mt-2 text-xs text-[var(--color-text-dim)]">
+                  <span>{formatQuarter(r.quarter)} {r.game_clock_time || ''}</span>
+                  {r.review_duration_minutes && <span>{r.review_duration_minutes} min</span>}
+                  {r.timeout_charged && <span>⏱ Timeout charged</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ── TIMELINE ── */}
+        {tab === 'timeline' && (
+          <div className="space-y-2">
+            {events.length === 0 ? <Empty label="No events recorded" /> : events.map(ev => (
+              <div key={ev.id} className="card flex items-start gap-3">
+                <div className="text-center min-w-[44px]">
+                  <div className="font-display text-sm text-purple-400">
+                    {ev.quarter ? formatQuarter(ev.quarter) : '—'}
+                  </div>
+                  <div className="font-mono text-xs text-[var(--color-text-dim)]">{ev.game_clock_time || '—'}</div>
+                </div>
+                <div className="flex-1">
+                  <div className="font-display text-base text-[var(--color-text)]">{ev.event_type}</div>
+                  {ev.team_involved && (
+                    <div className="text-xs text-[var(--color-text-muted)]">{ev.team_involved}</div>
+                  )}
+                  {ev.description && (
+                    <div className="text-xs text-[var(--color-text-dim)] mt-0.5">{ev.description}</div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
+
+function Empty({ label }: { label: string }) {
+  return (
+    <div className="card text-center py-10 text-[var(--color-text-dim)]">
+      <p className="font-display tracking-wider">{label}</p>
     </div>
   );
 }
