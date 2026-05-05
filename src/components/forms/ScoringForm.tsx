@@ -5,13 +5,14 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Modal } from '@/components/ui/Modal';
 import { nowTimeString } from '@/lib/utils';
+import type { ScoringPlay } from '@/types';
 
 const schema = z.object({
   quarter: z.coerce.number().min(1),
   game_clock_time: z.string().optional(),
   scoring_team: z.string().min(1, 'Required'),
   score_type: z.string().min(1, 'Required'),
-  pat_type: z.string().optional(), // only set if score_type is Touchdown or Defensive TD
+  pat_type: z.string().optional(),
   scoring_player_number: z.coerce.number().optional().nullable(),
   home_score_after: z.coerce.number().min(0),
   away_score_after: z.coerce.number().min(0),
@@ -28,11 +29,11 @@ interface ScoringFormProps {
   awayScore: number;
   currentQuarter: number;
   currentClock: string;
+  initialData?: Partial<ScoringPlay>;
   onSave: (data: Omit<FormData, 'pat_type'> & { game_id: string; wall_clock_time: string; score_type: string }) => Promise<void>;
   onClose: () => void;
 }
 
-// Base points per score type (before PAT)
 const BASE_POINTS: Record<string, number> = {
   'Touchdown':    6,
   'Defensive TD': 6,
@@ -47,40 +48,67 @@ const PAT_POINTS: Record<string, number> = {
   'PAT (2-pt)': 2,
 };
 
-// Score types that get a PAT follow-up
 const TD_TYPES = ['Touchdown', 'Defensive TD'];
-
 const SCORE_TYPES = ['Touchdown', 'Defensive TD', 'Field Goal', 'Safety', 'PAT (kick)', 'PAT (2-pt)'];
 
+// ── Parse stored score_type back into base type + pat ──────────────────────
+// Stored formats: "Touchdown + PAT (kick)", "Touchdown (no PAT)", "Field Goal"
+function parseStoredScoreType(stored: string): { scoreType: string; patType: string | undefined } {
+  if (stored.includes(' + ')) {
+    const plusIdx = stored.indexOf(' + ');
+    return {
+      scoreType: stored.substring(0, plusIdx),
+      patType: stored.substring(plusIdx + 3),
+    };
+  }
+  if (stored.endsWith(' (no PAT)')) {
+    return { scoreType: stored.replace(' (no PAT)', ''), patType: undefined };
+  }
+  return { scoreType: stored, patType: undefined };
+}
+
 export function ScoringForm({
-  gameId, homeName, awayName, homeScore, awayScore, currentQuarter, currentClock, onSave, onClose,
+  gameId, homeName, awayName, homeScore, awayScore,
+  currentQuarter, currentClock, initialData, onSave, onClose,
 }: ScoringFormProps) {
+
+  // Parse stored score_type for edit mode
+  const parsed = initialData?.score_type
+    ? parseStoredScoreType(initialData.score_type)
+    : { scoreType: '', patType: undefined };
+
   const { register, handleSubmit, watch, setValue, formState: { errors, isSubmitting } } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: {
-      quarter: currentQuarter,
-      game_clock_time: currentClock,
-      home_score_after: homeScore,
-      away_score_after: awayScore,
+      quarter:               initialData?.quarter               ?? currentQuarter,
+      game_clock_time:       initialData?.game_clock_time       ?? currentClock,
+      scoring_team:          initialData?.scoring_team          ?? '',
+      score_type:            parsed.scoreType,
+      pat_type:              parsed.patType,
+      scoring_player_number: initialData?.scoring_player_number ?? undefined,
+      // In edit mode, start from the stored after-scores
+      home_score_after:      initialData?.home_score_after      ?? homeScore,
+      away_score_after:      initialData?.away_score_after      ?? awayScore,
+      notes:                 initialData?.notes                 ?? '',
     },
   });
 
-  const team = watch('scoring_team');
+  const team      = watch('scoring_team');
   const scoreType = watch('score_type');
-  const patType = watch('pat_type');
-  const isTD = TD_TYPES.includes(scoreType);
+  const patType   = watch('pat_type');
+  const isTD      = TD_TYPES.includes(scoreType);
 
-  // Auto-calculate score
+  // Auto-calculate score (only meaningful for new entries; edit mode shows stored values)
   const calcScore = (t: string, type: string, pat?: string) => {
-    const base = BASE_POINTS[type] ?? 0;
+    if (initialData) return; // don't auto-calc in edit mode
+    const base   = BASE_POINTS[type] ?? 0;
     const patPts = pat ? (PAT_POINTS[pat] ?? 0) : 0;
-    const total = base + patPts;
+    const total  = base + patPts;
     if (t === 'home') setValue('home_score_after', homeScore + total);
     if (t === 'away') setValue('away_score_after', awayScore + total);
   };
 
   const onSubmit = async (data: FormData) => {
-    // Build the final score_type label to store
     let finalType = data.score_type;
     if (isTD && data.pat_type) {
       finalType = `${data.score_type} + ${data.pat_type}`;
@@ -96,7 +124,6 @@ export function ScoringForm({
     <Modal title="🏆 Scoring Play" onClose={onClose} size="md">
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
 
-        {/* Quarter + Clock */}
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="label">Quarter</label>
@@ -110,7 +137,6 @@ export function ScoringForm({
           </div>
         </div>
 
-        {/* Scoring team */}
         <div>
           <label className="label">Scoring Team</label>
           <div className="flex gap-2">
@@ -130,7 +156,6 @@ export function ScoringForm({
           {errors.scoring_team && <p className="text-red-400 text-xs mt-1">{errors.scoring_team.message}</p>}
         </div>
 
-        {/* Score type */}
         <div>
           <label className="label">Score Type</label>
           <div className="grid grid-cols-2 gap-1.5">
@@ -153,7 +178,6 @@ export function ScoringForm({
           {errors.score_type && <p className="text-red-400 text-xs mt-1">{errors.score_type.message}</p>}
         </div>
 
-        {/* PAT follow-up — only shown after TD or Defensive TD */}
         {isTD && (
           <div className="border border-yellow-800 rounded-xl p-3 bg-yellow-950/30">
             <label className="label text-yellow-400">PAT (optional)</label>
@@ -171,7 +195,6 @@ export function ScoringForm({
                   {pat === 'PAT (kick)' ? 'Kick (+1)' : '2-pt Conv. (+2)'}
                 </label>
               ))}
-              {/* Clear PAT selection */}
               {patType && (
                 <button type="button"
                   onClick={() => { setValue('pat_type', undefined); calcScore(team, scoreType, undefined); }}
@@ -183,15 +206,16 @@ export function ScoringForm({
           </div>
         )}
 
-        {/* Player # */}
         <div>
           <label className="label">Player # (opt)</label>
           <input {...register('scoring_player_number')} type="number" placeholder="##" className="input-field" />
         </div>
 
-        {/* Score after — always editable */}
         <div>
-          <label className="label">Score After This Play</label>
+          <label className="label">
+            Score After This Play
+            {initialData && <span className="text-xs text-yellow-400 ml-2">(adjust manually if score type changed)</span>}
+          </label>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-[var(--color-text-muted)] mb-1 block">{homeName}</label>
@@ -210,7 +234,7 @@ export function ScoringForm({
         </div>
 
         <button type="submit" disabled={isSubmitting} className="btn-primary w-full">
-          {isSubmitting ? 'Saving…' : 'Save Score'}
+          {isSubmitting ? 'Saving…' : initialData ? 'Update Score' : 'Save Score'}
         </button>
       </form>
     </Modal>
