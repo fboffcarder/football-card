@@ -1,5 +1,4 @@
 // ─── Database Types ────────────────────────────────────────────────────────────
-// These mirror the Supabase tables exactly.
 
 export interface Game {
   id: string;
@@ -19,7 +18,6 @@ export interface Game {
   overtime_periods: number;
   notes: string | null;
   created_at: string;
-  // ─── Added in migration 002 ───
   finalized: boolean;
   finalized_at: string | null;
 }
@@ -54,6 +52,7 @@ export interface Timeout {
   team: string;
   timeout_number_for_team: number | null;
   reason: string | null;
+  player_number: number | null;
 }
 
 export interface ScoringPlay {
@@ -82,6 +81,9 @@ export interface Penalty {
   foul_type: string;
   yardage: number | null;
   spot_enforcement: boolean;
+  // Added in migration 001
+  enforcement_type: string | null;
+  enforcement_modifier: string | null;
   status: string;
   automatic_first_down: boolean;
   calling_official_position: string | null;
@@ -135,7 +137,7 @@ export interface LiveGameState {
   gameClock: string;
   homeScore: number;
   awayScore: number;
-  homeTimeoutsLeft: number; // per half: 3
+  homeTimeoutsLeft: number;
   awayTimeoutsLeft: number;
   isOnline: boolean;
 }
