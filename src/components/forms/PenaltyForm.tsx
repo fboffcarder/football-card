@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { FOUL_TYPES, OFFICIAL_POSITIONS } from '@/types';
 import { nowTimeString } from '@/lib/utils';
+import type { Penalty } from '@/types';
 
 const schema = z.object({
   quarter: z.coerce.number().min(1),
@@ -15,13 +16,10 @@ const schema = z.object({
   player_number: z.coerce.number().optional().nullable(),
   foul_type: z.string().min(1, 'Required'),
   yardage: z.coerce.number().optional().nullable(),
-  // enforcement: live_ball or dead_ball
   enforcement_type: z.string().optional(),
-  // modifier: spot or previous (sub-option under live/dead)
   enforcement_modifier: z.string().optional(),
   status: z.string().default('Accepted'),
   automatic_first_down: z.boolean().default(false),
-  // stored as comma-separated string in existing column
   calling_official_position: z.string().optional(),
   down_and_distance_before: z.string().optional(),
   notes: z.string().optional(),
@@ -35,20 +33,43 @@ interface PenaltyFormProps {
   awayName: string;
   currentQuarter: number;
   currentClock: string;
+  initialData?: Partial<Penalty>;
   onSave: (data: FormData & { game_id: string; wall_clock_time: string; spot_enforcement: boolean }) => Promise<void>;
   onClose: () => void;
 }
 
 export function PenaltyForm({
-  gameId, homeName, awayName, currentQuarter, currentClock, onSave, onClose,
+  gameId, homeName, awayName, currentQuarter, currentClock, initialData, onSave, onClose,
 }: PenaltyFormProps) {
+  // Pre-populate officials from stored comma-separated string
+  const [selectedOfficials, setSelectedOfficials] = useState<string[]>(
+    initialData?.calling_official_position
+      ? initialData.calling_official_position.split(', ').filter(Boolean)
+      : []
+  );
+
+  // Derive enforcement_modifier from spot_enforcement if enforcement_modifier not stored
+  const derivedModifier =
+    initialData?.enforcement_modifier ??
+    (initialData?.spot_enforcement === true ? 'spot' : initialData?.spot_enforcement === false ? 'previous' : undefined);
+
   const { register, handleSubmit, watch, setValue, formState: { errors, isSubmitting } } = useForm<FormData>({
     resolver: zodResolver(schema),
-    defaultValues: { quarter: currentQuarter, game_clock_time: currentClock, status: 'Accepted' },
+    defaultValues: {
+      quarter: initialData?.quarter ?? currentQuarter,
+      game_clock_time: initialData?.game_clock_time ?? currentClock,
+      team_penalized: initialData?.team_penalized ?? '',
+      player_number: initialData?.player_number ?? undefined,
+      foul_type: initialData?.foul_type ?? '',
+      yardage: initialData?.yardage ?? undefined,
+      enforcement_type: initialData?.enforcement_type ?? undefined,
+      enforcement_modifier: derivedModifier,
+      status: initialData?.status ?? 'Accepted',
+      automatic_first_down: initialData?.automatic_first_down ?? false,
+      down_and_distance_before: initialData?.down_and_distance_before ?? '',
+      notes: initialData?.notes ?? '',
+    },
   });
-
-  // Multi-select officials state
-  const [selectedOfficials, setSelectedOfficials] = useState<string[]>([]);
 
   const toggleOfficial = (position: string) => {
     setSelectedOfficials(prev =>
@@ -65,7 +86,6 @@ export function PenaltyForm({
       game_id: gameId,
       wall_clock_time: nowTimeString(),
       spot_enforcement: isSpot,
-      // Store selected officials as comma-separated string
       calling_official_position: selectedOfficials.join(', ') || undefined,
     });
     onClose();
@@ -75,7 +95,6 @@ export function PenaltyForm({
     <Modal title="🚩 Penalty" onClose={onClose} size="lg">
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
 
-        {/* Quarter + Clock */}
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="label">Quarter</label>
@@ -89,7 +108,6 @@ export function PenaltyForm({
           </div>
         </div>
 
-        {/* Team */}
         <div>
           <label className="label">Team Penalized</label>
           <select {...register('team_penalized')} className="input-field">
@@ -101,7 +119,6 @@ export function PenaltyForm({
           {errors.team_penalized && <p className="text-red-400 text-xs mt-1">{errors.team_penalized.message}</p>}
         </div>
 
-        {/* Foul Type */}
         <div>
           <label className="label">Foul Type</label>
           <select {...register('foul_type')} className="input-field">
@@ -111,7 +128,6 @@ export function PenaltyForm({
           {errors.foul_type && <p className="text-red-400 text-xs mt-1">{errors.foul_type.message}</p>}
         </div>
 
-        {/* Player + Yards */}
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="label">Player # (opt)</label>
@@ -128,7 +144,7 @@ export function PenaltyForm({
           </div>
         </div>
 
-        {/* ── Enforcement: Live / Dead Ball toggle ── */}
+        {/* Enforcement: Live / Dead Ball */}
         <div>
           <label className="label">Enforcement</label>
           <div className="flex gap-2 mb-2">
@@ -144,8 +160,6 @@ export function PenaltyForm({
               </label>
             ))}
           </div>
-
-          {/* Sub-options: Spot / Previous — shown when Live Ball or Dead Ball selected */}
           {enforcementType && (
             <div className="flex gap-2 mt-1">
               {['Spot', 'Previous'].map(mod => (
@@ -163,13 +177,12 @@ export function PenaltyForm({
           )}
         </div>
 
-        {/* Down & Distance AFTER enforcement */}
         <div>
           <label className="label">Down &amp; Distance After Enforcement</label>
           <input {...register('down_and_distance_before')} placeholder="e.g. 1st & 10" className="input-field" />
         </div>
 
-        {/* ── Calling Officials — multi-select ── */}
+        {/* Calling Officials — multi-select */}
         <div>
           <label className="label">Calling Official(s)</label>
           <div className="grid grid-cols-2 gap-1.5">
@@ -193,7 +206,6 @@ export function PenaltyForm({
           </div>
         </div>
 
-        {/* Status */}
         <div>
           <label className="label">Status</label>
           <div className="flex gap-3 flex-wrap">
@@ -206,20 +218,18 @@ export function PenaltyForm({
           </div>
         </div>
 
-        {/* Auto 1st Down */}
         <label className="flex items-center gap-2 cursor-pointer">
           <input type="checkbox" {...register('automatic_first_down')} className="accent-field-500 w-4 h-4" />
           <span className="text-sm text-[var(--color-text)]">Automatic 1st Down</span>
         </label>
 
-        {/* Notes */}
         <div>
           <label className="label">Notes (opt)</label>
           <textarea {...register('notes')} rows={2} placeholder="Any extra details…" className="input-field resize-none" />
         </div>
 
         <button type="submit" disabled={isSubmitting} className="btn-primary w-full">
-          {isSubmitting ? 'Saving…' : 'Save Penalty'}
+          {isSubmitting ? 'Saving…' : initialData ? 'Update Penalty' : 'Save Penalty'}
         </button>
       </form>
     </Modal>
