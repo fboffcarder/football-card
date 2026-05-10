@@ -276,6 +276,8 @@ export const CONFERENCES = [
   'D2 – GSAC',
   'D2 – MIAA',
   'D2 – Other',
+  'High School',
+  'High School Playoffs',
   'High School – State',
   'Other',
 ] as const;
