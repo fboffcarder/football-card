@@ -34,7 +34,7 @@ const schema = z.object({
   toss_call: z.string().nullable().optional(),
   toss_result: z.string().nullable().optional(),
   winner_choice: z.string().optional(),
-  second_half_choice: z.string().optional(),
+  winner_first_half_choice: z.string().optional(),
   loser_choice: z.string().optional(),
   captains_home: z.string().optional(),
   captains_away: z.string().optional(),
@@ -109,8 +109,9 @@ export default function NewGamePage() {
             toss_winner: tossWinner,
             toss_call: data.toss_call || null,
             toss_result: data.toss_result || null,
-            winner_choice: data.winner_choice || null,
-            second_half_choice: data.second_half_choice || null,
+            winner_choice: data.winner_choice === 'Defer' && data.loser_choice === 'Choose End' && data.winner_first_half_choice
+              ? `Defer – ${data.winner_first_half_choice}`
+              : data.winner_choice || null,
             loser_choice: data.loser_choice || null,
             captains_home: data.captains_home || null,
             captains_away: data.captains_away || null,
@@ -315,7 +316,7 @@ export default function NewGamePage() {
                 </select>
               </div>
 
-              {/* Step 2: Winner's remaining 1st-half pick (only when loser chose end — otherwise it's automatic) */}
+              {/* Step 2: Winner's remaining 1st-half pick */}
               {loserChoice && (
                 <div>
                   <label className="label">Winner's 2nd Choice (1st Half)</label>
@@ -324,8 +325,8 @@ export default function NewGamePage() {
                       <p className="text-xs text-[var(--color-text-dim)] mb-1">
                         Loser chose the end — winner must now choose to kick or receive
                       </p>
-                      <select {...register('winner_choice')} className="input-field">
-                        <option value="Defer">— select —</option>
+                      <select {...register('winner_first_half_choice')} className="input-field">
+                        <option value="">— select —</option>
                         <option value="Receive">Receive</option>
                         <option value="Kick">Kick</option>
                       </select>
@@ -335,22 +336,6 @@ export default function NewGamePage() {
                       {loserChoice === 'Receive' ? 'Kick (automatic — loser is receiving)' : 'Receive (automatic — loser is kicking)'}
                     </p>
                   )}
-                </div>
-              )}
-
-              {/* Step 3: Winner's choice at the start of the 2nd half (the deferred choice) */}
-              {loserChoice && (
-                <div>
-                  <label className="label">Winner's 2nd Half Choice</label>
-                  <p className="text-xs text-[var(--color-text-dim)] mb-1">
-                    Winner deferred — they now choose for the start of the 2nd half
-                  </p>
-                  <select {...register('second_half_choice')} className="input-field">
-                    <option value="">—</option>
-                    <option value="Receive">Receive</option>
-                    <option value="Kick">Kick</option>
-                    <option value="Choose End">Choose End</option>
-                  </select>
                 </div>
               )}
             </div>
