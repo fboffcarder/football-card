@@ -158,7 +158,7 @@ export default function NewGamePage() {
             </div>
             <div>
               <label className="label">Kickoff</label>
-              <input {...register('kickoff_time')} type="time" className="input-field" />
+              <input {...register('kickoff_time')} type="text" placeholder="e.g. 13:00" className="input-field" />
               <p className="text-xs text-[var(--color-text-dim)] mt-1">24-hr format: 09:00 = 9 AM · 13:00 = 1 PM · 19:00 = 7 PM</p>
             </div>
           </div>
@@ -299,13 +299,14 @@ export default function NewGamePage() {
             </select>
           </div>
 
-          {/* When winner defers, loser picks first — then winner picks from what's left */}
+          {/* When winner defers, loser picks first */}
           {winnerChoice === 'Defer' && (
             <div className="border border-yellow-800 rounded-xl p-3 bg-yellow-950/20 space-y-3">
               <p className="text-xs text-yellow-400 font-display uppercase tracking-wider">Winner Deferred — Loser Picks First</p>
 
+              {/* Step 1: Loser picks */}
               <div>
-                <label className="label">Loser's Choice</label>
+                <label className="label">Loser's Choice (1st Half)</label>
                 <select {...register('loser_choice')} className="input-field">
                   <option value="">—</option>
                   <option value="Receive">Receive</option>
@@ -314,17 +315,41 @@ export default function NewGamePage() {
                 </select>
               </div>
 
+              {/* Step 2: Winner's remaining 1st-half pick (only when loser chose end — otherwise it's automatic) */}
+              {loserChoice && (
+                <div>
+                  <label className="label">Winner's 2nd Choice (1st Half)</label>
+                  {loserChoice === 'Choose End' ? (
+                    <>
+                      <p className="text-xs text-[var(--color-text-dim)] mb-1">
+                        Loser chose the end — winner must now choose to kick or receive
+                      </p>
+                      <select {...register('winner_choice')} className="input-field">
+                        <option value="Defer">— select —</option>
+                        <option value="Receive">Receive</option>
+                        <option value="Kick">Kick</option>
+                      </select>
+                    </>
+                  ) : (
+                    <p className="text-sm text-[var(--color-text)] border border-[var(--color-border)] rounded-lg px-3 py-2">
+                      {loserChoice === 'Receive' ? 'Kick (automatic — loser is receiving)' : 'Receive (automatic — loser is kicking)'}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Step 3: Winner's choice at the start of the 2nd half (the deferred choice) */}
               {loserChoice && (
                 <div>
                   <label className="label">Winner's 2nd Half Choice</label>
                   <p className="text-xs text-[var(--color-text-dim)] mb-1">
-                    Loser chose {loserChoice} — winner now selects from the remaining options
+                    Winner deferred — they now choose for the start of the 2nd half
                   </p>
                   <select {...register('second_half_choice')} className="input-field">
                     <option value="">—</option>
-                    {['Receive', 'Kick', 'Choose End']
-                      .filter(o => o !== loserChoice)
-                      .map(o => <option key={o} value={o}>{o}</option>)}
+                    <option value="Receive">Receive</option>
+                    <option value="Kick">Kick</option>
+                    <option value="Choose End">Choose End</option>
                   </select>
                 </div>
               )}
