@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { ArrowLeft, Share2, FileDown, Play, Lock, Trash2, Pencil, PlayCircle } from 'lucide-react';
+import { ArrowLeft, Share2, FileDown, Play, Lock, Trash2, Pencil, Plus } from 'lucide-react';
 import { createClient } from '@/lib/supabase';
 import { formatGameDate, formatQuarter } from '@/lib/utils';
 import { TimeoutForm } from '@/components/forms/TimeoutForm';
@@ -80,6 +80,13 @@ export default function GameDetailPage() {
   const [editingPenalty,  setEditingPenalty]  = useState<Penalty | null>(null);
   const [editingReplay,   setEditingReplay]   = useState<InstantReplay | null>(null);
   const [editingEvent,    setEditingEvent]    = useState<GameEvent | null>(null);
+
+  // ── Add new entry state ──────────────────────────────────────────────────
+  const [showAddTimeout,  setShowAddTimeout]  = useState(false);
+  const [showAddScore,    setShowAddScore]    = useState(false);
+  const [showAddPenalty,  setShowAddPenalty]  = useState(false);
+  const [showAddReplay,   setShowAddReplay]   = useState(false);
+  const [showAddEvent,    setShowAddEvent]    = useState(false);
 
   // ── Official inline edit state ───────────────────────────────────────────
   const [editingOfficial,     setEditingOfficial]     = useState<Official | null>(null);
@@ -184,6 +191,32 @@ export default function GameDetailPage() {
       setEvents(prev => prev.map(e => e.id === editingEvent!.id ? { ...e, ...update } : e));
       setEditingEvent(null);
     }
+  };
+
+  // ── Row insert handlers ───────────────────────────────────────────────────
+  const handleAddTimeout = async (data: any) => {
+    const { data: inserted, error } = await supabase.from('timeouts').insert(data).select().single();
+    if (!error && inserted) { setTimeouts(prev => [...prev, inserted]); setShowAddTimeout(false); }
+  };
+
+  const handleAddScore = async (data: any) => {
+    const { data: inserted, error } = await supabase.from('scoring_plays').insert(data).select().single();
+    if (!error && inserted) { setScores(prev => [...prev, inserted]); setShowAddScore(false); }
+  };
+
+  const handleAddPenalty = async (data: any) => {
+    const { data: inserted, error } = await supabase.from('penalties').insert(data).select().single();
+    if (!error && inserted) { setPenalties(prev => [...prev, inserted]); setShowAddPenalty(false); }
+  };
+
+  const handleAddReplay = async (data: any) => {
+    const { data: inserted, error } = await supabase.from('instant_replays').insert(data).select().single();
+    if (!error && inserted) { setReplays(prev => [...prev, inserted]); setShowAddReplay(false); }
+  };
+
+  const handleAddEvent = async (data: any) => {
+    const { data: inserted, error } = await supabase.from('game_events').insert(data).select().single();
+    if (!error && inserted) { setEvents(prev => [...prev, inserted]); setShowAddEvent(false); }
   };
 
   const handleUpdateOfficial = async () => {
@@ -457,6 +490,66 @@ export default function GameDetailPage() {
         />
       )}
 
+      {/* ══ ADD FORM MODALS ══════════════════════════════════════════════════ */}
+      {showAddTimeout && (
+        <TimeoutForm
+          gameId={gameId}
+          homeName={game.home_team}
+          awayName={game.away_team}
+          currentQuarter={1}
+          currentClock=""
+          onSave={handleAddTimeout}
+          onClose={() => setShowAddTimeout(false)}
+        />
+      )}
+      {showAddScore && (
+        <ScoringForm
+          gameId={gameId}
+          homeName={game.home_team}
+          awayName={game.away_team}
+          homeScore={scores.length > 0 ? scores[scores.length - 1].home_score_after : 0}
+          awayScore={scores.length > 0 ? scores[scores.length - 1].away_score_after : 0}
+          currentQuarter={1}
+          currentClock=""
+          onSave={handleAddScore}
+          onClose={() => setShowAddScore(false)}
+        />
+      )}
+      {showAddPenalty && (
+        <PenaltyForm
+          gameId={gameId}
+          homeName={game.home_team}
+          awayName={game.away_team}
+          currentQuarter={1}
+          currentClock=""
+          officials={officials}
+          onSave={handleAddPenalty}
+          onClose={() => setShowAddPenalty(false)}
+        />
+      )}
+      {showAddReplay && (
+        <ReplayForm
+          gameId={gameId}
+          homeName={game.home_team}
+          awayName={game.away_team}
+          currentQuarter={1}
+          currentClock=""
+          onSave={handleAddReplay}
+          onClose={() => setShowAddReplay(false)}
+        />
+      )}
+      {showAddEvent && (
+        <EventForm
+          gameId={gameId}
+          homeName={game.home_team}
+          awayName={game.away_team}
+          currentQuarter={1}
+          currentClock=""
+          onSave={handleAddEvent}
+          onClose={() => setShowAddEvent(false)}
+        />
+      )}
+
       {/* ══ HEADER ═══════════════════════════════════════════════════════════ */}
       <header className="sticky top-0 z-30 px-4 py-3 border-b border-[var(--color-border)]"
         style={{ backgroundColor: 'var(--color-surface)' }}>
@@ -580,16 +673,10 @@ export default function GameDetailPage() {
                 </div>
               ) : (
                 <>
-                  <div className="grid grid-cols-2 gap-3">
-                    <button onClick={() => router.push(`/game/${gameId}/edit`)}
-                      className="btn-secondary flex items-center justify-center gap-2 text-sm py-3">
-                      <Pencil size={14} /> Edit Setup
-                    </button>
-                    <button onClick={() => router.push(`/game/${gameId}/live`)}
-                      className="btn-secondary flex items-center justify-center gap-2 text-sm py-3">
-                      <PlayCircle size={14} /> Edit Events
-                    </button>
-                  </div>
+                  <button onClick={() => router.push(`/game/${gameId}/edit`)}
+                    className="btn-secondary w-full flex items-center justify-center gap-2 text-sm py-3">
+                    <Pencil size={14} /> Edit Game Setup
+                  </button>
                   <button onClick={() => setShowFinalizeConfirm(true)}
                     className="w-full flex items-center justify-center gap-2 rounded-xl px-4 py-3 font-display uppercase tracking-wider text-sm bg-field-800 hover:bg-field-700 text-field-300 border border-field-600 transition-colors">
                     <Lock size={14} /> Finalize Game
@@ -662,6 +749,11 @@ export default function GameDetailPage() {
         {/* ── SCORING ───────────────────────────────────────────────────── */}
         {tab === 'scoring' && (
           <div className="space-y-2">
+            {!isFinalized && (
+              <button onClick={() => setShowAddScore(true)} className="btn-primary w-full flex items-center justify-center gap-2 text-sm py-3">
+                <Plus size={15} /> Add Scoring Play
+              </button>
+            )}
             {scores.length === 0 ? <Empty label="No scoring plays recorded" /> : scores.map(s => (
               <div key={s.id} className="card flex items-center gap-3">
                 <div className="text-center min-w-[44px]">
@@ -690,6 +782,11 @@ export default function GameDetailPage() {
         {/* ── TIMEOUTS ──────────────────────────────────────────────────── */}
         {tab === 'timeouts' && (
           <div className="space-y-2">
+            {!isFinalized && (
+              <button onClick={() => setShowAddTimeout(true)} className="btn-primary w-full flex items-center justify-center gap-2 text-sm py-3">
+                <Plus size={15} /> Add Timeout
+              </button>
+            )}
             {timeouts.length === 0 ? <Empty label="No timeouts recorded" /> : timeouts.map(t => (
               <div key={t.id} className="card flex items-center gap-3">
                 <div className="text-center min-w-[44px]">
@@ -719,6 +816,11 @@ export default function GameDetailPage() {
         {/* ── PENALTIES ─────────────────────────────────────────────────── */}
         {tab === 'penalties' && (
           <div className="space-y-2">
+            {!isFinalized && (
+              <button onClick={() => setShowAddPenalty(true)} className="btn-primary w-full flex items-center justify-center gap-2 text-sm py-3">
+                <Plus size={15} /> Add Penalty
+              </button>
+            )}
             {penalties.length === 0 ? <Empty label="No penalties recorded" /> : penalties.map(p => (
               <div key={p.id} className="card border-l-4 border-l-red-600">
                 <div className="flex items-start justify-between gap-2">
@@ -758,6 +860,11 @@ export default function GameDetailPage() {
         {/* ── REPLAYS ───────────────────────────────────────────────────── */}
         {tab === 'replays' && (
           <div className="space-y-2">
+            {!isFinalized && (
+              <button onClick={() => setShowAddReplay(true)} className="btn-primary w-full flex items-center justify-center gap-2 text-sm py-3">
+                <Plus size={15} /> Add Replay
+              </button>
+            )}
             {replays.length === 0 ? <Empty label="No instant replays recorded" /> : replays.map(r => (
               <div key={r.id} className="card">
                 <div className="flex items-start justify-between gap-2 mb-2">
@@ -788,6 +895,11 @@ export default function GameDetailPage() {
         {/* ── TIMELINE ──────────────────────────────────────────────────── */}
         {tab === 'timeline' && (
           <div className="space-y-2">
+            {!isFinalized && (
+              <button onClick={() => setShowAddEvent(true)} className="btn-primary w-full flex items-center justify-center gap-2 text-sm py-3">
+                <Plus size={15} /> Add Event
+              </button>
+            )}
             {events.length === 0 ? <Empty label="No events recorded" /> : events.map(ev => (
               <div key={ev.id} className="card flex items-start gap-3">
                 <div className="text-center min-w-[44px]">

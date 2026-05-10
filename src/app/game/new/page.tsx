@@ -123,7 +123,7 @@ export default function NewGamePage() {
       }
 
       // Navigate to in-game screen
-      router.push(`/game/${gameId}/live`);
+      router.push(`/game/${gameId}`);
     } catch (err) {
       console.error('FULL ERROR:', err);
       const msg = err instanceof Error ? err.message : JSON.stringify(err);
@@ -378,7 +378,7 @@ export default function NewGamePage() {
           style={{ backgroundColor: 'var(--color-surface)' }}>
           <div className="max-w-xl mx-auto">
             <button type="submit" disabled={saving} className="btn-primary w-full text-xl py-4">
-              {saving ? 'Starting Game…' : '⚽ Start Game'}
+              {saving ? 'Starting Game…' : '🏈 Start Game'}
             </button>
           </div>
         </div>
