@@ -5,9 +5,9 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useState } from 'react';
 import { Modal } from '@/components/ui/Modal';
-import { FOUL_TYPES, OFFICIAL_POSITIONS } from '@/types';
+import { FOUL_TYPES } from '@/types';
 import { nowTimeString } from '@/lib/utils';
-import type { Penalty } from '@/types';
+import type { Penalty, Official } from '@/types';
 
 const schema = z.object({
   quarter: z.coerce.number().min(1),
@@ -33,13 +33,14 @@ interface PenaltyFormProps {
   awayName: string;
   currentQuarter: number;
   currentClock: string;
+  officials: Official[];
   initialData?: Partial<Penalty>;
   onSave: (data: FormData & { game_id: string; wall_clock_time: string; spot_enforcement: boolean }) => Promise<void>;
   onClose: () => void;
 }
 
 export function PenaltyForm({
-  gameId, homeName, awayName, currentQuarter, currentClock, initialData, onSave, onClose,
+  gameId, homeName, awayName, currentQuarter, currentClock, officials, initialData, onSave, onClose,
 }: PenaltyFormProps) {
   // Pre-populate officials from stored comma-separated string
   const [selectedOfficials, setSelectedOfficials] = useState<string[]>(
@@ -137,9 +138,9 @@ export function PenaltyForm({
             <label className="label">Yards</label>
             <select {...register('yardage')} className="input-field">
               <option value="">—</option>
-              <option value={5}>5</option>
-              <option value={10}>10</option>
-              <option value={15}>15</option>
+              {Array.from({ length: 15 }, (_, i) => i + 1).map(y => (
+                <option key={y} value={y}>{y}</option>
+              ))}
             </select>
           </div>
         </div>
@@ -182,28 +183,36 @@ export function PenaltyForm({
           <input {...register('down_and_distance_before')} placeholder="e.g. 1st & 10" className="input-field" />
         </div>
 
-        {/* Calling Officials — multi-select */}
+        {/* Calling Officials — only officials assigned to this game */}
         <div>
           <label className="label">Calling Official(s)</label>
-          <div className="grid grid-cols-2 gap-1.5">
-            {OFFICIAL_POSITIONS.map(pos => (
-              <label key={pos}
-                className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-sm transition-colors ${
-                  selectedOfficials.includes(pos)
-                    ? 'bg-field-800 border-field-500 text-field-300'
-                    : 'border-[var(--color-border)] text-[var(--color-text-dim)]'
-                }`}
-                onClick={() => toggleOfficial(pos)}
-              >
-                <span className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
-                  selectedOfficials.includes(pos) ? 'bg-field-500 border-field-500' : 'border-[var(--color-border)]'
-                }`}>
-                  {selectedOfficials.includes(pos) && <span className="text-white text-xs">✓</span>}
-                </span>
-                {pos}
-              </label>
-            ))}
-          </div>
+          {officials.length === 0 ? (
+            <p className="text-xs text-[var(--color-text-dim)] italic">No officials recorded for this game.</p>
+          ) : (
+            <div className="grid grid-cols-2 gap-1.5">
+              {officials.map(o => {
+                const label = o.name ? `${o.name} (${o.position})` : o.position;
+                const key   = o.name || o.position;
+                return (
+                  <label key={key}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-sm transition-colors ${
+                      selectedOfficials.includes(key)
+                        ? 'bg-field-800 border-field-500 text-field-300'
+                        : 'border-[var(--color-border)] text-[var(--color-text-dim)]'
+                    }`}
+                    onClick={() => toggleOfficial(key)}
+                  >
+                    <span className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
+                      selectedOfficials.includes(key) ? 'bg-field-500 border-field-500' : 'border-[var(--color-border)]'
+                    }`}>
+                      {selectedOfficials.includes(key) && <span className="text-white text-xs">✓</span>}
+                    </span>
+                    {label}
+                  </label>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         <div>

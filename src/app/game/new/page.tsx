@@ -34,6 +34,7 @@ const schema = z.object({
   toss_call: z.string().nullable().optional(),
   toss_result: z.string().nullable().optional(),
   winner_choice: z.string().optional(),
+  second_half_choice: z.string().optional(),
   loser_choice: z.string().optional(),
   captains_home: z.string().optional(),
   captains_away: z.string().optional(),
@@ -57,10 +58,11 @@ export default function NewGamePage() {
 
   const { fields: officialFields, append, remove } = useFieldArray({ control, name: 'officials' });
 
-  const homeName = watch('home_team') || 'Home';
-  const awayName = watch('away_team') || 'Away';
-  const tossCall = watch('toss_call');
+  const homeName   = watch('home_team') || 'Home';
+  const awayName   = watch('away_team') || 'Away';
+  const tossCall   = watch('toss_call');
   const tossResult = watch('toss_result');
+  const winnerChoice = watch('winner_choice');
 
   console.log('FORM ERRORS:', JSON.stringify(errors)); const onSubmit = async (data: FormData) => {
     console.log('SUBMIT FIRED', data); setSaving(true);
@@ -107,6 +109,7 @@ export default function NewGamePage() {
             toss_call: data.toss_call || null,
             toss_result: data.toss_result || null,
             winner_choice: data.winner_choice || null,
+            second_half_choice: data.second_half_choice || null,
             loser_choice: data.loser_choice || null,
             captains_home: data.captains_home || null,
             captains_away: data.captains_away || null,
@@ -155,6 +158,7 @@ export default function NewGamePage() {
             <div>
               <label className="label">Kickoff</label>
               <input {...register('kickoff_time')} type="time" className="input-field" />
+              <p className="text-xs text-[var(--color-text-dim)] mt-1">24-hr military time (e.g. 13:00 = 1 PM). Defaults to AM.</p>
             </div>
           </div>
 
@@ -304,6 +308,19 @@ export default function NewGamePage() {
               </select>
             </div>
           </div>
+
+          {winnerChoice === 'Defer' && (
+            <div>
+              <label className="label">Winner's 2nd Half Choice</label>
+              <p className="text-xs text-[var(--color-text-dim)] mb-1">Team deferred — select their choice to start the 2nd half</p>
+              <select {...register('second_half_choice')} className="input-field">
+                <option value="">—</option>
+                <option value="Receive">Receive</option>
+                <option value="Kick">Kick</option>
+                <option value="Choose End">Choose End</option>
+              </select>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             <div>

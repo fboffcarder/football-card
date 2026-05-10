@@ -426,6 +426,7 @@ export default function GameDetailPage() {
           awayName={game.away_team}
           currentQuarter={editingPenalty.quarter}
           currentClock={editingPenalty.game_clock_time ?? ''}
+          officials={officials}
           initialData={editingPenalty}
           onSave={handleUpdatePenalty}
           onClose={() => setEditingPenalty(null)}

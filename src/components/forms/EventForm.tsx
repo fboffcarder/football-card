@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { Modal } from '@/components/ui/Modal';
 import { EVENT_TYPES } from '@/types';
 import { nowTimeString } from '@/lib/utils';
+import type { GameEvent } from '@/types';
 
 const schema = z.object({
   quarter: z.coerce.number().optional().nullable(),
@@ -24,16 +25,24 @@ interface EventFormProps {
   awayName: string;
   currentQuarter: number;
   currentClock: string;
+  initialData?: Partial<GameEvent>;
   onSave: (data: FormData & { game_id: string; wall_clock_time: string }) => Promise<void>;
   onClose: () => void;
 }
 
 export function EventForm({
-  gameId, homeName, awayName, currentQuarter, currentClock, onSave, onClose,
+  gameId, homeName, awayName, currentQuarter, currentClock, initialData, onSave, onClose,
 }: EventFormProps) {
   const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<FormData>({
     resolver: zodResolver(schema),
-    defaultValues: { quarter: currentQuarter, game_clock_time: currentClock },
+    defaultValues: {
+      quarter:         initialData?.quarter         ?? currentQuarter,
+      game_clock_time: initialData?.game_clock_time ?? currentClock,
+      event_type:      initialData?.event_type      ?? '',
+      team_involved:   initialData?.team_involved   ?? '',
+      player_number:   initialData?.player_number   ?? undefined,
+      description:     initialData?.description     ?? '',
+    },
   });
 
   const onSubmit = async (data: FormData) => {
@@ -88,7 +97,7 @@ export function EventForm({
         </div>
 
         <button type="submit" disabled={isSubmitting} className="btn-primary w-full">
-          {isSubmitting ? 'Saving…' : 'Save Event'}
+          {isSubmitting ? 'Saving…' : initialData ? 'Update Event' : 'Save Event'}
         </button>
       </form>
     </Modal>

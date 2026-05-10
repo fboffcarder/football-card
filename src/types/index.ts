@@ -222,6 +222,7 @@ export const CONFERENCES = [
   'D2 – CIAA',
   'D2 – GLIAC',
   'D2 – GSAC',
+  'D2 – MIAA',
   'D2 – Other',
   'High School – State',
   'Other',
