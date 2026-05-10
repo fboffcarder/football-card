@@ -63,6 +63,7 @@ export default function NewGamePage() {
   const tossCall   = watch('toss_call');
   const tossResult = watch('toss_result');
   const winnerChoice = watch('winner_choice');
+  const loserChoice  = watch('loser_choice');
 
   console.log('FORM ERRORS:', JSON.stringify(errors)); const onSubmit = async (data: FormData) => {
     console.log('SUBMIT FIRED', data); setSaving(true);
@@ -158,7 +159,7 @@ export default function NewGamePage() {
             <div>
               <label className="label">Kickoff</label>
               <input {...register('kickoff_time')} type="time" className="input-field" />
-              <p className="text-xs text-[var(--color-text-dim)] mt-1">24-hr military time (e.g. 13:00 = 1 PM). Defaults to AM.</p>
+              <p className="text-xs text-[var(--color-text-dim)] mt-1">24-hr format: 09:00 = 9 AM · 13:00 = 1 PM · 19:00 = 7 PM</p>
             </div>
           </div>
 
@@ -287,37 +288,58 @@ export default function NewGamePage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="label">Winner's Choice</label>
-              <select {...register('winner_choice')} className="input-field">
-                <option value="">—</option>
-                <option value="Receive">Receive</option>
-                <option value="Kick">Kick</option>
-                <option value="Defer">Defer</option>
-                <option value="Choose End">Choose End</option>
-              </select>
+          <div>
+            <label className="label">Winner's Choice</label>
+            <select {...register('winner_choice')} className="input-field">
+              <option value="">—</option>
+              <option value="Receive">Receive</option>
+              <option value="Kick">Kick</option>
+              <option value="Defer">Defer</option>
+              <option value="Choose End">Choose End</option>
+            </select>
+          </div>
+
+          {/* When winner defers, loser picks first — then winner picks from what's left */}
+          {winnerChoice === 'Defer' && (
+            <div className="border border-yellow-800 rounded-xl p-3 bg-yellow-950/20 space-y-3">
+              <p className="text-xs text-yellow-400 font-display uppercase tracking-wider">Winner Deferred — Loser Picks First</p>
+
+              <div>
+                <label className="label">Loser's Choice</label>
+                <select {...register('loser_choice')} className="input-field">
+                  <option value="">—</option>
+                  <option value="Receive">Receive</option>
+                  <option value="Kick">Kick</option>
+                  <option value="Choose End">Choose End</option>
+                </select>
+              </div>
+
+              {loserChoice && (
+                <div>
+                  <label className="label">Winner's 2nd Half Choice</label>
+                  <p className="text-xs text-[var(--color-text-dim)] mb-1">
+                    Loser chose {loserChoice} — winner now selects from the remaining options
+                  </p>
+                  <select {...register('second_half_choice')} className="input-field">
+                    <option value="">—</option>
+                    {['Receive', 'Kick', 'Choose End']
+                      .filter(o => o !== loserChoice)
+                      .map(o => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                </div>
+              )}
             </div>
+          )}
+
+          {/* When winner did NOT defer, show loser's remaining option */}
+          {winnerChoice && winnerChoice !== 'Defer' && (
             <div>
               <label className="label">Loser Gets</label>
               <select {...register('loser_choice')} className="input-field">
                 <option value="">—</option>
-                <option value="Receive">Receive</option>
-                <option value="Kick">Kick</option>
-                <option value="Choose End">Choose End</option>
-              </select>
-            </div>
-          </div>
-
-          {winnerChoice === 'Defer' && (
-            <div>
-              <label className="label">Winner's 2nd Half Choice</label>
-              <p className="text-xs text-[var(--color-text-dim)] mb-1">Team deferred — select their choice to start the 2nd half</p>
-              <select {...register('second_half_choice')} className="input-field">
-                <option value="">—</option>
-                <option value="Receive">Receive</option>
-                <option value="Kick">Kick</option>
-                <option value="Choose End">Choose End</option>
+                {['Receive', 'Kick', 'Choose End']
+                  .filter(o => o !== winnerChoice)
+                  .map(o => <option key={o} value={o}>{o}</option>)}
               </select>
             </div>
           )}
